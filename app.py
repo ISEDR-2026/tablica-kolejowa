@@ -6,7 +6,6 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
 
 # ============================================================
@@ -187,10 +186,6 @@ initialize_state()
 
 # Automatyczne odświeżenie strony co 60 sekund.
 # Funkcję wywołujemy tylko raz w całym skrypcie.
-st_autorefresh(
-    interval=REFRESH_INTERVAL_SECONDS * 1000,
-    key="train_board_refresh",
-)
 
 
 # ============================================================
