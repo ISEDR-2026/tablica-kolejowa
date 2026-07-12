@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import textwrap
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -26,8 +27,6 @@ DEFAULT_FAVORITES = [
     "Goleniów",
 ]
 
-# Tymczasowa lista stacji.
-# Po podłączeniu API zostanie zastąpiona pełnym wykazem stacji.
 AVAILABLE_STATIONS = [
     "Kamień Pomorski",
     "Wysoka Kamieńska",
@@ -45,11 +44,9 @@ AVAILABLE_STATIONS = [
     "Trzebiatów",
     "Nowogard",
     "Wolin Pomorski",
-    "Międzywodzie",
     "Recław",
 ]
 
-REFRESH_INTERVAL_SECONDS = 60
 NUMBER_OF_TRAINS = 5
 
 
@@ -157,6 +154,15 @@ st.markdown(
             .train-time {
                 font-size: 1.35rem;
             }
+
+            .train-card-inner {
+                flex-direction: column;
+                align-items: flex-start !important;
+            }
+
+            .train-right {
+                text-align: left !important;
+            }
         }
     </style>
     """,
@@ -169,8 +175,6 @@ st.markdown(
 # ============================================================
 
 def initialize_state() -> None:
-    """Ustawia wartości początkowe aplikacji."""
-
     if "favorites" not in st.session_state:
         st.session_state.favorites = DEFAULT_FAVORITES.copy()
 
@@ -184,20 +188,11 @@ def initialize_state() -> None:
 initialize_state()
 
 
-# Automatyczne odświeżenie strony co 60 sekund.
-# Funkcję wywołujemy tylko raz w całym skrypcie.
-
-
 # ============================================================
 # DANE TESTOWE
 # ============================================================
 
 def stable_number(text: str, minimum: int, maximum: int) -> int:
-    """
-    Tworzy powtarzalną liczbę na podstawie tekstu.
-    Dzięki temu dane testowe nie zmieniają się losowo przy każdym kliknięciu.
-    """
-
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     value = int(digest[:8], 16)
 
@@ -205,8 +200,6 @@ def stable_number(text: str, minimum: int, maximum: int) -> int:
 
 
 def get_test_directions(station: str) -> list[str]:
-    """Zwraca przykładowe kierunki dla wybranej stacji."""
-
     directions: dict[str, list[str]] = {
         "Kamień Pomorski": [
             "Wysoka Kamieńska",
@@ -260,13 +253,6 @@ def generate_test_trains(
     station: str,
     number_of_trains: int = NUMBER_OF_TRAINS,
 ) -> list[dict[str, Any]]:
-    """
-    Generuje tymczasową listę najbliższych pociągów.
-
-    Po aktywacji API ta funkcja zostanie zastąpiona pobieraniem
-    prawdziwych danych z PKP PLK.
-    """
-
     now = datetime.now()
     current_minute = now.replace(second=0, microsecond=0)
     directions = get_test_directions(station)
@@ -342,22 +328,16 @@ def generate_test_trains(
 # ============================================================
 
 def select_station(station: str) -> None:
-    """Ustawia aktualnie wybraną stację."""
-
     st.session_state.selected_station = station
 
 
 def toggle_favorites_editor() -> None:
-    """Pokazuje lub ukrywa edytor ulubionych."""
-
     st.session_state.show_favorites_editor = (
         not st.session_state.show_favorites_editor
     )
 
 
 def save_favorites() -> None:
-    """Zapisuje ulubione wybrane w edytorze."""
-
     selected = st.session_state.favorites_editor
 
     if not selected:
@@ -370,17 +350,17 @@ def save_favorites() -> None:
         st.session_state.selected_station = selected[0]
 
     st.session_state.show_favorites_editor = False
-    st.success("Lista ulubionych została zapisana.")
 
 
 # ============================================================
-# INTERFEJS
+# NAGŁÓWEK
 # ============================================================
 
 st.markdown(
     '<div class="main-title">🚆 Moja Tablica Kolejowa</div>',
     unsafe_allow_html=True,
 )
+
 st.markdown(
     '<div class="subtitle">'
     "Pięć najbliższych pociągów dla wybranej stacji"
@@ -416,7 +396,6 @@ with editor_button_col:
         on_click=toggle_favorites_editor,
     )
 
-
 favorites = st.session_state.favorites
 number_of_columns = min(4, max(1, len(favorites)))
 favorite_columns = st.columns(number_of_columns)
@@ -447,7 +426,7 @@ if st.session_state.show_favorites_editor:
         st.subheader("⚙️ Edycja ulubionych stacji")
 
         st.multiselect(
-            "Wybierz stacje, które mają być widoczne jako szybkie przyciski:",
+            "Wybierz stacje widoczne jako szybkie przyciski:",
             options=AVAILABLE_STATIONS,
             default=st.session_state.favorites,
             key="favorites_editor",
@@ -457,12 +436,13 @@ if st.session_state.show_favorites_editor:
         save_col, cancel_col = st.columns(2)
 
         with save_col:
-            st.button(
+            if st.button(
                 "💾 Zapisz ulubione",
                 use_container_width=True,
                 type="primary",
-                on_click=save_favorites,
-            )
+            ):
+                save_favorites()
+                st.rerun()
 
         with cancel_col:
             if st.button(
@@ -501,16 +481,20 @@ if selected_from_list != st.session_state.selected_station:
 selected_station = st.session_state.selected_station
 last_update = datetime.now()
 
-st.markdown(
+station_header_html = textwrap.dedent(
     f"""
     <div class="station-header">
         <div class="station-name">🚉 {selected_station}</div>
         <div class="update-time">
             Ostatnia aktualizacja: {last_update:%H:%M:%S}
-            • automatyczne odświeżanie co {REFRESH_INTERVAL_SECONDS} sekund
+            • odśwież stronę, aby pobrać nowe dane
         </div>
     </div>
-    """,
+    """
+).strip()
+
+st.markdown(
+    station_header_html,
     unsafe_allow_html=True,
 )
 
@@ -533,15 +517,17 @@ for train in trains:
             f" • planowo {train['planned_time']:%H:%M}"
         )
 
-    st.markdown(
+    train_card_html = textwrap.dedent(
         f"""
         <div class="train-card">
-            <div style="
-                display: flex;
-                justify-content: space-between;
-                gap: 1rem;
-                align-items: center;
-            ">
+            <div class="train-card-inner"
+                 style="
+                    display:flex;
+                    justify-content:space-between;
+                    gap:1rem;
+                    align-items:center;
+                 ">
+
                 <div>
                     <div class="train-time">
                         {train['current_time']:%H:%M}
@@ -559,11 +545,11 @@ for train in trains:
                     </div>
                 </div>
 
-                <div style="text-align: right;">
+                <div class="train-right" style="text-align:right;">
                     <div style="
-                        font-size: 1.15rem;
-                        font-weight: 750;
-                        margin-bottom: 0.2rem;
+                        font-size:1.15rem;
+                        font-weight:750;
+                        margin-bottom:0.2rem;
                     ">
                         za {train['minutes_until']} min
                     </div>
@@ -572,9 +558,14 @@ for train in trains:
                         {delay_html}
                     </div>
                 </div>
+
             </div>
         </div>
-        """,
+        """
+    ).strip()
+
+    st.markdown(
+        train_card_html,
         unsafe_allow_html=True,
     )
 
