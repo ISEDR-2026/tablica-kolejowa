@@ -13,7 +13,7 @@ from supabase import Client, create_client
 # ============================================================
 
 st.set_page_config(
-    page_title="Moja Tablica Kolejowa",
+    page_title="Ruch Pociągów",
     page_icon="🚆",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -60,42 +60,102 @@ st.markdown(
     <style>
         .block-container {
             max-width: 1100px;
-            padding-top: 1.2rem;
-            padding-bottom: 3rem;
+            padding-top: 2.2rem;
+            padding-bottom: 2.2rem;
         }
 
         .main-title {
-            font-size: 2.1rem;
+            font-size: 2.3rem;
             font-weight: 800;
-            margin-bottom: 0;
+            margin-top: 0.2rem;
+            margin-bottom: 0.15rem;
+            line-height: 1.15;
         }
 
         .subtitle {
             color: #A8ADB7;
-            margin-top: 0.2rem;
-            margin-bottom: 1.3rem;
+            margin-top: 0.15rem;
+            margin-bottom: 1.1rem;
+            font-size: 1rem;
         }
 
         .test-banner {
             border-radius: 10px;
-            padding: 0.75rem 0.9rem;
+            padding: 0.7rem 0.9rem;
             margin-bottom: 1rem;
             background: rgba(255, 179, 71, 0.12);
             border: 1px solid rgba(255, 179, 71, 0.35);
         }
 
         .station-title {
-            font-size: 1.55rem;
+            font-size: 1.45rem;
             font-weight: 750;
+            line-height: 1.1;
+            margin-bottom: 0.15rem;
         }
 
         .update-time {
             color: #A8ADB7;
-            font-size: 0.92rem;
+            font-size: 0.88rem;
+            line-height: 1.2;
+        }
+
+        .train-time {
+            font-size: 2.05rem;
+            font-weight: 800;
+            line-height: 1.0;
+            margin-bottom: 0.35rem;
+        }
+
+        .train-direction {
+            font-size: 1.05rem;
+            font-weight: 700;
+            line-height: 1.15;
+            margin-bottom: 0.28rem;
+        }
+
+        .train-details {
+            color: #A8ADB7;
+            font-size: 0.84rem;
+            line-height: 1.2;
+        }
+
+        .eta-time {
+            font-size: 1.45rem;
+            font-weight: 800;
+            line-height: 1.0;
+            text-align: right;
+            margin-bottom: 0.45rem;
+        }
+
+        .status-wrap {
+            text-align: right;
+        }
+
+        .status-pill {
+            display: inline-block;
+            padding: 0.42rem 0.72rem;
+            border-radius: 10px;
+            font-size: 0.9rem;
+            font-weight: 700;
+            line-height: 1.1;
+            white-space: nowrap;
+        }
+
+        .status-ok {
+            background: rgba(46, 160, 67, 0.22);
+            color: #8EF0A9;
+            border: 1px solid rgba(46, 160, 67, 0.30);
+        }
+
+        .status-warn {
+            background: rgba(190, 150, 20, 0.22);
+            color: #FFD86A;
+            border: 1px solid rgba(190, 150, 20, 0.30);
         }
 
         div[data-testid="stButton"] > button {
-            min-height: 2.8rem;
+            min-height: 2.65rem;
             border-radius: 10px;
             font-weight: 650;
         }
@@ -104,13 +164,51 @@ st.markdown(
             border-radius: 14px;
         }
 
+        h2, h3 {
+            margin-top: 0;
+        }
+
         @media (max-width: 640px) {
+            .block-container {
+                padding-top: 2.0rem;
+                padding-bottom: 1.6rem;
+            }
+
             .main-title {
-                font-size: 1.7rem;
+                font-size: 1.95rem;
+            }
+
+            .subtitle {
+                font-size: 0.95rem;
+                margin-bottom: 0.95rem;
             }
 
             .station-title {
-                font-size: 1.3rem;
+                font-size: 1.25rem;
+            }
+
+            .train-time {
+                font-size: 1.7rem;
+                margin-bottom: 0.28rem;
+            }
+
+            .train-direction {
+                font-size: 0.98rem;
+                margin-bottom: 0.22rem;
+            }
+
+            .train-details {
+                font-size: 0.8rem;
+            }
+
+            .eta-time {
+                font-size: 1.2rem;
+                margin-bottom: 0.35rem;
+            }
+
+            .status-pill {
+                padding: 0.36rem 0.6rem;
+                font-size: 0.82rem;
             }
         }
     </style>
@@ -560,16 +658,13 @@ with st.sidebar:
 # ============================================================
 
 st.markdown(
-    '<div class="main-title">'
-    "🚆 Moja Tablica Kolejowa"
-    "</div>",
+    '<div class="main-title">🚆 Ruch Pociągów</div>',
     unsafe_allow_html=True,
 )
 
 st.markdown(
     '<div class="subtitle">'
-    "Pięć najbliższych pociągów "
-    "dla wybranej stacji"
+    "Pięć najbliższych pociągów dla wybranej stacji"
     "</div>",
     unsafe_allow_html=True,
 )
@@ -678,9 +773,7 @@ last_update = datetime.now()
 
 with st.container(border=True):
     st.markdown(
-        f'<div class="station-title">'
-        f"🚉 {selected_station}"
-        f"</div>",
+        f'<div class="station-title">🚉 {selected_station}</div>',
         unsafe_allow_html=True,
     )
 
@@ -705,17 +798,21 @@ for train in trains:
 
         with left_column:
             st.markdown(
-                f"## "
+                f'<div class="train-time">'
                 f"{train['current_time']:%H:%M}"
+                f"</div>",
+                unsafe_allow_html=True,
             )
 
             st.markdown(
-                f"### → "
-                f"{train['direction']}"
+                f'<div class="train-direction">'
+                f"→ {train['direction']}"
+                f"</div>",
+                unsafe_allow_html=True,
             )
 
             details = (
-                f"**{train['train_number']}**"
+                f"{train['train_number']}"
                 f" · {train['carrier']}"
                 f" · peron {train['platform']}"
             )
@@ -726,27 +823,38 @@ for train in trains:
                     f"{train['planned_time']:%H:%M}"
                 )
 
-            st.caption(details)
+            st.markdown(
+                f'<div class="train-details">{details}</div>',
+                unsafe_allow_html=True,
+            )
 
         with right_column:
             st.markdown(
-                f"### za "
-                f"{train['minutes_until']} min"
+                f'<div class="eta-time">'
+                f"za {train['minutes_until']} min"
+                f"</div>",
+                unsafe_allow_html=True,
             )
 
             if train["delay"] == 0:
-                st.success(
-                    "Punktualnie",
-                    icon="✅",
+                status_html = (
+                    '<div class="status-wrap">'
+                    '<span class="status-pill status-ok">'
+                    '✅ Punktualnie'
+                    '</span></div>'
                 )
             else:
-                st.warning(
-                    (
-                        "Opóźnienie "
-                        f"+{train['delay']} min"
-                    ),
-                    icon="⚠️",
+                status_html = (
+                    '<div class="status-wrap">'
+                    f'<span class="status-pill status-warn">'
+                    f'⚠️ Opóźnienie +{train["delay"]} min'
+                    '</span></div>'
                 )
+
+            st.markdown(
+                status_html,
+                unsafe_allow_html=True,
+            )
 
 
 st.caption(
