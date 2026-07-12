@@ -1,0 +1,14 @@
+# Prywatne klucze i ustawienia
+.streamlit/secrets.toml
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.log
+.venv/
+venv/
+
+# System
+.DS_Store
+Thumbs.db
