@@ -9,7 +9,7 @@ import streamlit as st
 
 
 # ============================================================
-# KONFIGURACJA APLIKACJI
+# KONFIGURACJA
 # ============================================================
 
 st.set_page_config(
@@ -27,30 +27,30 @@ DEFAULT_FAVORITES = [
 ]
 
 AVAILABLE_STATIONS = [
-    "Kamień Pomorski",
-    "Wysoka Kamieńska",
-    "Gryfice",
     "Goleniów",
+    "Gryfice",
+    "Kamień Pomorski",
+    "Kołobrzeg",
+    "Koszalin",
     "Międzyzdroje",
+    "Nowogard",
+    "Recław",
+    "Stargard",
+    "Szczecin Dąbie",
+    "Szczecin Główny",
+    "Szczecin Zdroje",
     "Świnoujście",
     "Świnoujście Centrum",
-    "Szczecin Główny",
-    "Szczecin Dąbie",
-    "Szczecin Zdroje",
-    "Stargard",
-    "Koszalin",
-    "Kołobrzeg",
     "Trzebiatów",
-    "Nowogard",
     "Wolin Pomorski",
-    "Recław",
+    "Wysoka Kamieńska",
 ]
 
 NUMBER_OF_TRAINS = 5
 
 
 # ============================================================
-# STYL APLIKACJI
+# WYGLĄD
 # ============================================================
 
 st.markdown(
@@ -279,9 +279,7 @@ def generate_test_trains(
                 "current_time": current_time,
                 "minutes_until": minutes_to_train,
                 "direction": directions[direction_index],
-                "train_number": (
-                    f"{train_category} {train_number}"
-                ),
+                "train_number": f"{train_category} {train_number}",
                 "carrier": carrier,
                 "delay": delay,
                 "platform": stable_number(
@@ -299,37 +297,31 @@ def generate_test_trains(
 
 
 # ============================================================
-# OBSŁUGA STACJI I ULUBIONYCH
+# OPERACJE NA STACJACH
 # ============================================================
 
 def select_station(station: str) -> None:
     st.session_state.selected_station = station
 
 
-def toggle_favorites_editor() -> None:
-    st.session_state.show_favorites_editor = (
-        not st.session_state.show_favorites_editor
-    )
+def add_favorite(station: str) -> None:
+    if station not in st.session_state.favorites:
+        st.session_state.favorites.append(station)
 
 
-def save_favorites() -> bool:
-    selected = st.session_state.favorites_editor
-
-    if not selected:
+def remove_favorite(station: str) -> None:
+    if len(st.session_state.favorites) <= 1:
         st.warning(
-            "Lista ulubionych musi zawierać "
-            "przynajmniej jedną stację."
+            "Musi pozostać przynajmniej jedna ulubiona stacja."
         )
-        return False
+        return
 
-    st.session_state.favorites = selected
+    st.session_state.favorites.remove(station)
 
-    if st.session_state.selected_station not in selected:
-        st.session_state.selected_station = selected[0]
-
-    st.session_state.show_favorites_editor = False
-
-    return True
+    if st.session_state.selected_station == station:
+        st.session_state.selected_station = (
+            st.session_state.favorites[0]
+        )
 
 
 # ============================================================
@@ -345,8 +337,7 @@ st.markdown(
 
 st.markdown(
     '<div class="subtitle">'
-    "Pięć najbliższych pociągów "
-    "dla wybranej stacji"
+    "Pięć najbliższych pociągów dla wybranej stacji"
     "</div>",
     unsafe_allow_html=True,
 )
@@ -355,9 +346,8 @@ st.markdown(
     """
     <div class="test-banner">
         🧪 <strong>Tryb testowy:</strong>
-        wyświetlane godziny i pociągi są na razie
-        przykładowe. Po aktywacji klucza podłączymy
-        prawdziwe dane PKP PLK.
+        wyświetlane godziny i pociągi są na razie przykładowe.
+        Po aktywacji klucza podłączymy prawdziwe dane PKP PLK.
     </div>
     """,
     unsafe_allow_html=True,
@@ -368,9 +358,7 @@ st.markdown(
 # ULUBIONE STACJE
 # ============================================================
 
-favorite_header_col, editor_button_col = st.columns(
-    [3, 1]
-)
+favorite_header_col, editor_button_col = st.columns([3, 1])
 
 with favorite_header_col:
     st.subheader("⭐ Ulubione stacje")
@@ -379,123 +367,137 @@ with editor_button_col:
     if st.button(
         "⚙️ Edytuj ulubione",
         use_container_width=True,
+        key="open_favorites_editor",
     ):
-        toggle_favorites_editor()
+        st.session_state.show_favorites_editor = (
+            not st.session_state.show_favorites_editor
+        )
         st.rerun()
 
 
 favorites = st.session_state.favorites
-
-number_of_columns = min(
-    4,
-    max(1, len(favorites)),
-)
-
+number_of_columns = min(4, max(1, len(favorites)))
 favorite_columns = st.columns(number_of_columns)
 
 for index, station in enumerate(favorites):
-    column = favorite_columns[
-        index % number_of_columns
-    ]
+    column = favorite_columns[index % number_of_columns]
 
     with column:
         is_selected = (
-            station
-            == st.session_state.selected_station
+            station == st.session_state.selected_station
         )
 
-        button_label = (
+        label = (
             f"✓ {station}"
             if is_selected
             else station
         )
 
         if st.button(
-            button_label,
-            key=f"favorite_{station}",
+            label,
+            key=f"favorite_station_{index}",
             use_container_width=True,
-            type=(
-                "primary"
-                if is_selected
-                else "secondary"
-            ),
+            type="primary" if is_selected else "secondary",
         ):
             select_station(station)
             st.rerun()
 
 
 # ============================================================
-# EDYCJA ULUBIONYCH
+# BEZPIECZNY EDYTOR ULUBIONYCH
 # ============================================================
 
 if st.session_state.show_favorites_editor:
-    with st.container(border=True):
-        st.subheader("⚙️ Edycja ulubionych stacji")
+    st.divider()
+    st.subheader("⚙️ Edycja ulubionych stacji")
 
-        st.multiselect(
-            "Wybierz stacje widoczne jako "
-            "szybkie przyciski:",
-            options=AVAILABLE_STATIONS,
-            default=st.session_state.favorites,
-            key="favorites_editor",
-            placeholder=(
-                "Wybierz jedną lub więcej stacji"
-            ),
-        )
+    stations_to_add = [
+        station
+        for station in AVAILABLE_STATIONS
+        if station not in st.session_state.favorites
+    ]
 
-        save_col, cancel_col = st.columns(2)
+    if stations_to_add:
+        add_column, button_column = st.columns([3, 1])
 
-        with save_col:
+        with add_column:
+            station_to_add = st.selectbox(
+                "Wybierz stację do dodania:",
+                options=stations_to_add,
+                key="station_to_add",
+            )
+
+        with button_column:
+            st.write("")
+
             if st.button(
-                "💾 Zapisz ulubione",
+                "➕ Dodaj",
                 use_container_width=True,
-                type="primary",
+                key="add_favorite_button",
             ):
-                if save_favorites():
-                    st.rerun()
-
-        with cancel_col:
-            if st.button(
-                "Anuluj",
-                use_container_width=True,
-            ):
-                st.session_state.show_favorites_editor = (
-                    False
-                )
+                add_favorite(station_to_add)
                 st.rerun()
+    else:
+        st.info("Wszystkie dostępne stacje są już w ulubionych.")
+
+    st.markdown("#### Obecne ulubione")
+
+    for index, station in enumerate(
+        st.session_state.favorites.copy()
+    ):
+        name_column, remove_column = st.columns([3, 1])
+
+        with name_column:
+            st.write(f"⭐ {station}")
+
+        with remove_column:
+            if st.button(
+                "🗑️ Usuń",
+                key=f"remove_favorite_{index}",
+                use_container_width=True,
+                disabled=(
+                    len(st.session_state.favorites) <= 1
+                ),
+            ):
+                remove_favorite(station)
+                st.rerun()
+
+    if st.button(
+        "✅ Zakończ edycję",
+        use_container_width=True,
+        key="close_favorites_editor",
+    ):
+        st.session_state.show_favorites_editor = False
+        st.rerun()
+
+    st.divider()
 
 
 # ============================================================
 # WYBÓR INNEJ STACJI
 # ============================================================
 
-if (
-    st.session_state.selected_station
-    in AVAILABLE_STATIONS
-):
+if st.session_state.selected_station in AVAILABLE_STATIONS:
     selected_index = AVAILABLE_STATIONS.index(
         st.session_state.selected_station
     )
 else:
     selected_index = 0
 
-
 selected_from_list = st.selectbox(
     "🔎 Wybierz inną stację:",
     options=AVAILABLE_STATIONS,
     index=selected_index,
+    key="main_station_selector",
 )
 
-if (
-    selected_from_list
-    != st.session_state.selected_station
-):
+if selected_from_list != st.session_state.selected_station:
     select_station(selected_from_list)
     st.rerun()
 
 
 # ============================================================
-# NAGŁÓWEK WYBRANEJ STACJI
+# WYBRANA STACJA
 # ============================================================
 
 selected_station = st.session_state.selected_station
@@ -511,8 +513,7 @@ with st.container(border=True):
 
     st.markdown(
         f'<div class="update-time">'
-        f"Ostatnia aktualizacja: "
-        f"{last_update:%H:%M:%S} "
+        f"Ostatnia aktualizacja: {last_update:%H:%M:%S} "
         f"• odśwież stronę, aby pobrać nowe dane"
         f"</div>",
         unsafe_allow_html=True,
@@ -520,16 +521,14 @@ with st.container(border=True):
 
 
 # ============================================================
-# KARTY POCIĄGÓW
+# POCIĄGI
 # ============================================================
 
 trains = generate_test_trains(selected_station)
 
 for train in trains:
     with st.container(border=True):
-        left_column, right_column = st.columns(
-            [3, 1]
-        )
+        left_column, right_column = st.columns([3, 1])
 
         with left_column:
             st.markdown(
@@ -581,19 +580,13 @@ with st.expander("📋 Pokaż widok tabelaryczny"):
     for train in trains:
         table_data.append(
             {
-                "Aktualnie": (
-                    train["current_time"].strftime(
-                        "%H:%M"
-                    )
-                ),
-                "Planowo": (
-                    train["planned_time"].strftime(
-                        "%H:%M"
-                    )
-                ),
-                "Za": (
-                    f"{train['minutes_until']} min"
-                ),
+                "Aktualnie": train[
+                    "current_time"
+                ].strftime("%H:%M"),
+                "Planowo": train[
+                    "planned_time"
+                ].strftime("%H:%M"),
+                "Za": f"{train['minutes_until']} min",
                 "Pociąg": train["train_number"],
                 "Kierunek": train["direction"],
                 "Przewoźnik": train["carrier"],
