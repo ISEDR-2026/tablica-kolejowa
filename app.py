@@ -378,7 +378,7 @@ with favorite_header_col:
 with editor_button_col:
     if st.button(
         "⚙️ Edytuj ulubione",
-        width="stretch",
+        use_container_width=True,
     ):
         toggle_favorites_editor()
         st.rerun()
@@ -413,7 +413,7 @@ for index, station in enumerate(favorites):
         if st.button(
             button_label,
             key=f"favorite_{station}",
-            width="stretch",
+            use_container_width=True,
             type=(
                 "primary"
                 if is_selected
@@ -448,7 +448,7 @@ if st.session_state.show_favorites_editor:
         with save_col:
             if st.button(
                 "💾 Zapisz ulubione",
-                width="stretch",
+                use_container_width=True,
                 type="primary",
             ):
                 if save_favorites():
@@ -457,7 +457,7 @@ if st.session_state.show_favorites_editor:
         with cancel_col:
             if st.button(
                 "Anuluj",
-                width="stretch",
+                use_container_width=True,
             ):
                 st.session_state.show_favorites_editor = (
                     False
@@ -528,8 +528,7 @@ trains = generate_test_trains(selected_station)
 for train in trains:
     with st.container(border=True):
         left_column, right_column = st.columns(
-            [3, 1],
-            vertical_alignment="center",
+            [3, 1]
         )
 
         with left_column:
@@ -612,7 +611,7 @@ with st.expander("📋 Pokaż widok tabelaryczny"):
     st.dataframe(
         dataframe,
         hide_index=True,
-        width="stretch",
+        use_container_width=True,
     )
 
 
