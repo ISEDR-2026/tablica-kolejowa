@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import html
 import unicodedata
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -12,7 +12,7 @@ from supabase import Client, create_client
 
 st.set_page_config(
     page_title="MINI SWDR",
-    page_icon="🚦",
+    page_icon="🚆",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -20,11 +20,12 @@ st.set_page_config(
 PROFILE_ID = "adrian"
 API = "https://pdp-api.plk-sa.pl/api/v1"
 TZ = ZoneInfo("Europe/Warsaw")
+
 TIMEOUT = 30
 TRAINS_TTL = 90
 STATIONS_TTL = 86400
 DETAILS_TTL = 21600
-PASS_THROUGH_MAX_SECONDS = 30
+
 TRAIN_LIMITS = [5, 10, 15]
 
 DEFAULT_FAVORITES = [
@@ -36,7 +37,7 @@ DEFAULT_FAVORITES = [
 
 
 # ============================================================
-# WYGLĄD APLIKACJI
+# WYGLĄD
 # ============================================================
 
 st.markdown(
@@ -44,7 +45,7 @@ st.markdown(
     <style>
         .block-container {
             max-width: 1180px;
-            padding-top: 4.4rem;
+            padding-top: 5.2rem;
             padding-bottom: 2rem;
         }
 
@@ -53,16 +54,15 @@ st.markdown(
             align-items: center;
             gap: 1rem;
             padding: 1rem 1.1rem;
-            margin: 0.2rem 0 1.35rem;
+            margin: 0 0 1.25rem;
             border: 1px solid rgba(255, 255, 255, 0.12);
-            border-left: 5px solid #ef1b2d;
+            border-left: 5px solid #ef233c;
             border-radius: 14px;
-            background:
-                linear-gradient(
-                    135deg,
-                    rgba(22, 29, 40, 0.95),
-                    rgba(12, 17, 24, 0.92)
-                );
+            background: linear-gradient(
+                135deg,
+                rgba(24, 31, 42, 0.96),
+                rgba(12, 17, 24, 0.94)
+            );
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
         }
 
@@ -70,32 +70,32 @@ st.markdown(
             display: flex;
             flex-direction: column;
             gap: 0.22rem;
-            padding: 0.35rem 0.42rem;
+            padding: 0.38rem 0.44rem;
             border-radius: 10px;
             background: #090d12;
             border: 1px solid rgba(255, 255, 255, 0.12);
         }
 
         .signal-dot {
-            width: 0.58rem;
-            height: 0.58rem;
+            width: 0.6rem;
+            height: 0.6rem;
             border-radius: 50%;
             display: block;
         }
 
         .signal-red {
-            background: #ef1b2d;
-            box-shadow: 0 0 8px rgba(239, 27, 45, 0.65);
+            background: #ef233c;
+            box-shadow: 0 0 8px rgba(239, 35, 60, 0.65);
         }
 
         .signal-amber {
             background: #f6c344;
-            box-shadow: 0 0 8px rgba(246, 195, 68, 0.45);
+            box-shadow: 0 0 8px rgba(246, 195, 68, 0.48);
         }
 
         .signal-green {
             background: #42d17d;
-            box-shadow: 0 0 8px rgba(66, 209, 125, 0.45);
+            box-shadow: 0 0 8px rgba(66, 209, 125, 0.48);
         }
 
         .title {
@@ -114,14 +114,13 @@ st.markdown(
 
         .rail-divider {
             height: 4px;
-            margin: -0.78rem 0 1.35rem;
+            margin: -0.72rem 0 1.35rem;
             border-radius: 999px;
-            background:
-                repeating-linear-gradient(
-                    90deg,
-                    #3c4654 0 26px,
-                    #141a22 26px 34px
-                );
+            background: repeating-linear-gradient(
+                90deg,
+                #3c4654 0 26px,
+                #141a22 26px 34px
+            );
         }
 
         .station {
@@ -164,7 +163,7 @@ st.markdown(
             border-radius: 8px;
             background: rgba(255, 255, 255, 0.075);
             border: 1px solid rgba(255, 255, 255, 0.14);
-            border-left: 3px solid #ef1b2d;
+            border-left: 3px solid #ef233c;
             font-size: 0.88rem;
             font-weight: 750;
             letter-spacing: 0.02em;
@@ -183,18 +182,6 @@ st.markdown(
             border-radius: 8px;
             font-size: 0.78rem;
             font-weight: 700;
-        }
-
-        .stop {
-            background: rgba(46, 160, 67, 0.15);
-            color: #8ef0a9;
-            border: 1px solid rgba(46, 160, 67, 0.28);
-        }
-
-        .pass {
-            background: rgba(65, 130, 220, 0.17);
-            color: #a9d1ff;
-            border: 1px solid rgba(65, 130, 220, 0.3);
         }
 
         .start {
@@ -279,7 +266,7 @@ st.markdown(
 
         @media (max-width: 640px) {
             .block-container {
-                padding-top: 3.8rem;
+                padding-top: 4.5rem;
             }
 
             .app-header {
@@ -411,15 +398,9 @@ def delay_minutes(
     )
 
 
-def fmt_clock(
-    value: datetime | None,
-    seconds: bool = False,
-) -> str:
+def fmt_clock(value: datetime | None) -> str:
     if value is None:
         return "—"
-
-    if seconds:
-        return value.strftime("%H:%M:%S")
 
     return value.strftime("%H:%M")
 
@@ -435,32 +416,6 @@ def fmt_delay(value: int | None) -> str:
         return f"{value} min"
 
     return "0 min"
-
-
-def fmt_duration(seconds: int | None) -> str:
-    if seconds is None:
-        return "—"
-
-    seconds = max(
-        0,
-        int(seconds),
-    )
-
-    if seconds < 60:
-        return f"{seconds} s"
-
-    minutes, remaining_seconds = divmod(
-        seconds,
-        60,
-    )
-
-    if remaining_seconds == 0:
-        return f"{minutes} min"
-
-    return (
-        f"{minutes} min "
-        f"{remaining_seconds} s"
-    )
 
 
 # ============================================================
@@ -938,17 +893,12 @@ def relation(
 
 
 # ============================================================
-# KLASYFIKACJA RUCHU
+# STACJA POCZĄTKOWA / KOŃCOWA
 # ============================================================
 
-def classify(
+def endpoint_status(
     point: dict[str, Any],
-) -> tuple[
-    str,
-    str,
-    str,
-    int | None,
-]:
+) -> tuple[str, str, str]:
     planned_arrival = parse_dt(
         point.get("plannedArrival")
     )
@@ -965,7 +915,6 @@ def classify(
             "Stacja początkowa",
             "🚉",
             "start",
-            None,
         )
 
     if (
@@ -976,47 +925,9 @@ def classify(
             "Stacja końcowa",
             "🏁",
             "end",
-            None,
         )
 
-    if (
-        planned_arrival is not None
-        and planned_departure is not None
-    ):
-        dwell_seconds = max(
-            0,
-            int(
-                (
-                    planned_departure
-                    - planned_arrival
-                ).total_seconds()
-            ),
-        )
-
-        if (
-            dwell_seconds
-            <= PASS_THROUGH_MAX_SECONDS
-        ):
-            return (
-                "Przejazd bez postoju",
-                "➡️",
-                "pass",
-                dwell_seconds,
-            )
-
-        return (
-            "Postój",
-            "🛑",
-            "stop",
-            dwell_seconds,
-        )
-
-    return (
-        "Punkt trasy",
-        "📍",
-        "pass",
-        None,
-    )
+    return "", "", ""
 
 
 def last_confirmed(
@@ -1106,11 +1017,10 @@ def convert_train(
         return None
 
     (
-        movement,
-        movement_icon,
-        movement_css,
-        planned_dwell,
-    ) = classify(point)
+        endpoint_name,
+        endpoint_icon,
+        endpoint_css,
+    ) = endpoint_status(point)
 
     planned_arrival = parse_dt(
         point.get("plannedArrival")
@@ -1128,7 +1038,7 @@ def convert_train(
         point.get("actualDeparture")
     )
 
-    if movement == "Stacja początkowa":
+    if endpoint_name == "Stacja początkowa":
         planned_reference = (
             planned_departure
         )
@@ -1140,7 +1050,7 @@ def convert_train(
 
         event_name = "odjazd"
 
-    elif movement == "Stacja końcowa":
+    elif endpoint_name == "Stacja końcowa":
         planned_reference = (
             planned_arrival
         )
@@ -1151,21 +1061,6 @@ def convert_train(
         )
 
         event_name = "przyjazd"
-
-    elif movement == "Przejazd bez postoju":
-        planned_reference = (
-            planned_arrival
-            or planned_departure
-        )
-
-        actual_reference = (
-            actual_arrival
-            or actual_departure
-            or planned_arrival
-            or planned_departure
-        )
-
-        event_name = "przejazd"
 
     else:
         planned_reference = (
@@ -1256,7 +1151,7 @@ def convert_train(
     restriction = ""
 
     if isinstance(schedule_point, dict):
-        if movement == "Stacja końcowa":
+        if endpoint_name == "Stacja końcowa":
             platform = str(
                 schedule_point.get(
                     "arrivalPlatform",
@@ -1339,22 +1234,6 @@ def convert_train(
             else departure_delay
         )
 
-    actual_dwell = None
-
-    if (
-        actual_arrival is not None
-        and actual_departure is not None
-    ):
-        actual_dwell = max(
-            0,
-            int(
-                (
-                    actual_departure
-                    - actual_arrival
-                ).total_seconds()
-            ),
-        )
-
     (
         confirmed_station,
         confirmed_time,
@@ -1416,11 +1295,9 @@ def convert_train(
         ),
         "platform": platform,
         "track": track,
-        "movement": movement,
-        "icon": movement_icon,
-        "movement_css": movement_css,
-        "planned_dwell": planned_dwell,
-        "actual_dwell": actual_dwell,
+        "endpoint_name": endpoint_name,
+        "endpoint_icon": endpoint_icon,
+        "endpoint_css": endpoint_css,
         "restriction": restriction,
         "confirmed": bool(
             point.get(
@@ -1438,7 +1315,7 @@ def convert_train(
 
 
 # ============================================================
-# POBIERANIE NAJBLIŻSZYCH POCIĄGÓW
+# NAJBLIŻSZE POCIĄGI
 # ============================================================
 
 @st.cache_data(
@@ -1634,7 +1511,7 @@ def get_live_trains(
 
 
 # ============================================================
-# POBRANIE LISTY STACJI
+# LISTA STACJI
 # ============================================================
 
 with st.spinner(
@@ -1655,7 +1532,6 @@ if station_records:
     ) = station_indexes(
         station_records
     )
-
 else:
     station_name_to_id = {}
     station_id_to_name = {}
@@ -1816,7 +1692,6 @@ with st.sidebar:
             f"{len(station_names)}",
             icon="🚉",
         )
-
     else:
         st.error(
             "Nie udało się pobrać "
@@ -2030,7 +1905,7 @@ for index, station in enumerate(
 
 
 # ============================================================
-# WYBÓR DOWOLNEJ STACJI
+# WYBÓR STACJI
 # ============================================================
 
 if station_names:
@@ -2056,7 +1931,7 @@ if station_names:
 
 
 # ============================================================
-# POBRANIE POCIĄGÓW
+# POBIERANIE POCIĄGÓW
 # ============================================================
 
 selected_station = (
@@ -2169,9 +2044,13 @@ for train in trains:
         ) = st.columns([3.3, 1])
 
         with left_column:
+            main_time = fmt_clock(
+                train["actual_ref"]
+            )
+
             st.markdown(
                 f'<div class="time">'
-                f'{fmt_clock(train["actual_ref"])}'
+                f"{main_time}"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -2182,38 +2061,44 @@ for train in trains:
                 train["planned_arrival"]
                 is not None
             ):
+                arrival_time = fmt_clock(
+                    train["planned_arrival"]
+                )
+
+                arrival_delay_text = fmt_delay(
+                    train["arrival_delay"]
+                )
+
                 time_parts.append(
-                    "Przyjazd "
-                    f'{fmt_clock('
-                    f'train["planned_arrival"]'
-                    f")}"
-                    " "
-                    f'({fmt_delay('
-                    f'train["arrival_delay"]'
-                    f")})"
+                    f"Przyjazd {arrival_time} "
+                    f"({arrival_delay_text})"
                 )
 
             if (
                 train["planned_departure"]
                 is not None
             ):
+                departure_time = fmt_clock(
+                    train["planned_departure"]
+                )
+
+                departure_delay_text = fmt_delay(
+                    train["departure_delay"]
+                )
+
                 time_parts.append(
-                    "Odjazd "
-                    f'{fmt_clock('
-                    f'train["planned_departure"]'
-                    f")}"
-                    " "
-                    f'({fmt_delay('
-                    f'train["departure_delay"]'
-                    f")})"
+                    f"Odjazd {departure_time} "
+                    f"({departure_delay_text})"
                 )
 
             if time_parts:
+                times_text = html.escape(
+                    " · ".join(time_parts)
+                )
+
                 st.markdown(
                     f'<div class="times">'
-                    f'{html.escape('
-                    f'" · ".join(time_parts)'
-                    f")}"
+                    f"{times_text}"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
@@ -2259,11 +2144,13 @@ for train in trains:
                     train["restriction"]
                 )
 
+            details_text = html.escape(
+                " · ".join(details)
+            )
+
             st.markdown(
                 f'<div class="muted">'
-                f'{html.escape('
-                f'" · ".join(details)'
-                f")}"
+                f"{details_text}"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -2275,69 +2162,41 @@ for train in trains:
                 and train["platform"] != "—"
             ):
                 track_parts.append(
-                    f'PERON '
+                    f'Peron '
                     f'{train["platform"]}'
                 )
 
             if train["track"]:
                 track_parts.append(
-                    f'TOR '
+                    f'Tor '
                     f'{train["track"]}'
                 )
 
             if track_parts:
+                track_text = html.escape(
+                    " · ".join(track_parts)
+                )
+
                 st.markdown(
                     f'<div class="track">'
-                    f'🚦 '
-                    f'{html.escape('
-                    f'" · ".join(track_parts)'
-                    f")}"
+                    f"🚦 {track_text}"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
 
-            pills: list[str] = [
-                (
+            pills: list[str] = []
+
+            if train["endpoint_name"]:
+                endpoint_text = html.escape(
+                    train["endpoint_name"]
+                )
+
+                pills.append(
                     f'<span class="pill '
-                    f'{train["movement_css"]}">'
-                    f'{train["icon"]} '
-                    f'{html.escape('
-                    f'train["movement"]'
-                    f")}"
+                    f'{train["endpoint_css"]}">'
+                    f'{train["endpoint_icon"]} '
+                    f"{endpoint_text}"
                     f"</span>"
-                )
-            ]
-
-            if (
-                train["planned_dwell"]
-                is not None
-            ):
-                pills.append(
-                    '<span class="pill neutral">'
-                    '⏱️ Postój planowy: '
-                    f'{html.escape('
-                    f'fmt_duration('
-                    f'train["planned_dwell"]'
-                    f")"
-                    f")}"
-                    '</span>'
-                )
-
-            if (
-                train["actual_dwell"]
-                is not None
-                and train["movement"]
-                == "Postój"
-            ):
-                pills.append(
-                    '<span class="pill neutral">'
-                    '📏 Postój rzeczywisty: '
-                    f'{html.escape('
-                    f'fmt_duration('
-                    f'train["actual_dwell"]'
-                    f")"
-                    f")}"
-                    '</span>'
                 )
 
             if train["confirmed"]:
@@ -2424,16 +2283,18 @@ for train in trains:
             if train[
                 "last_confirmed_station"
             ]:
+                confirmed_station = html.escape(
+                    train[
+                        "last_confirmed_station"
+                    ]
+                )
+
                 confirmed_note = (
                     "Ostatnio potwierdzony:"
                     "<br>"
-                    "<strong>"
-                    f'{html.escape('
-                    f'train['
-                    f'"last_confirmed_station"'
-                    f"]"
-                    f")}"
-                    "</strong>"
+                    f"<strong>"
+                    f"{confirmed_station}"
+                    f"</strong>"
                 )
 
                 if (
@@ -2463,7 +2324,5 @@ for train in trains:
 
 st.caption(
     "Dane: PKP Polskie Linie Kolejowe S.A. "
-    "• nazwy pociągów pobierane ze szczegółów trasy "
-    "• przejazd bez postoju rozpoznawany jako "
-    "punkt techniczny do 30 sekund"
+    "• nazwy pociągów pobierane ze szczegółów trasy"
 )
