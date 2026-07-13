@@ -37,8 +37,14 @@ st.markdown("""
 .start{background:rgba(155,89,182,.16);color:#d8b4f2;border:1px solid rgba(155,89,182,.3)}.end{background:rgba(230,126,34,.15);color:#ffc58e;border:1px solid rgba(230,126,34,.3)}.neutral{background:rgba(255,255,255,.065);color:#dce1ea;border:1px solid rgba(255,255,255,.12)}
 .eta-label{text-align:right;color:#a8adb7;font-size:.76rem}.eta{text-align:right;font-size:1.35rem;font-weight:800}.status{text-align:right;margin-top:.35rem}
 .status span{display:inline-block;padding:.4rem .65rem;border-radius:10px;font-size:.82rem;font-weight:700}.sok{background:rgba(46,160,67,.22);color:#8ef0a9}.swarn{background:rgba(190,150,20,.22);color:#ffd86a}.searly{background:rgba(65,130,220,.2);color:#9cc8ff}.splan{background:rgba(255,255,255,.07);color:#dce1ea}
-.note{text-align:right;color:#a8adb7;font-size:.74rem;margin-top:.35rem}div[data-testid="stButton"]>button{min-height:2.65rem;border-radius:10px;font-weight:650}div[data-testid="stVerticalBlockBorderWrapper"]{border-radius:14px}
-@media(max-width:640px){.block-container{padding-top:4.5rem}.app-header{padding:.85rem .9rem}.title{font-size:1.85rem}.time{font-size:1.65rem}.train{font-size:1rem}.eta{font-size:1.1rem}}
+.note{text-align:right;color:#a8adb7;font-size:.74rem;margin-top:.35rem}
+.route-summary{color:#a8adb7;font-size:.84rem;margin:.15rem 0 .7rem}
+.route-list{display:flex;flex-direction:column;gap:.48rem;margin:.25rem 0 .5rem}
+.route-stop{display:grid;grid-template-columns:2rem minmax(150px,1.35fr) minmax(220px,2fr);gap:.65rem;align-items:center;padding:.58rem .68rem;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.035)}
+.route-stop.passed{border-left:4px solid #42d17d}.route-stop.current{border-left:4px solid #f6c344;background:rgba(246,195,68,.07)}.route-stop.future{border-left:4px solid #667080}
+.route-icon{font-size:1.12rem;text-align:center}.route-name{font-weight:750;line-height:1.2}.route-meta{color:#a8adb7;font-size:.78rem;margin-top:.14rem}.route-times{font-size:.82rem;line-height:1.45}.route-delay-ok{color:#8ef0a9;font-weight:700}.route-delay-warn{color:#ffd86a;font-weight:700}.route-estimate{color:#a9d1ff;font-weight:700}
+div[data-testid="stButton"]>button{min-height:2.65rem;border-radius:10px;font-weight:650}div[data-testid="stVerticalBlockBorderWrapper"]{border-radius:14px}
+@media(max-width:640px){.block-container{padding-top:4.5rem}.app-header{padding:.85rem .9rem}.title{font-size:1.85rem}.time{font-size:1.65rem}.train{font-size:1rem}.eta{font-size:1.1rem}.route-stop{grid-template-columns:1.7rem 1fr}.route-times{grid-column:2}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -261,6 +267,235 @@ def last_confirmed(train: dict[str, Any], station_id: int, operations_map: dict[
     return "", None
 
 
+
+def add_delay(value: datetime | None, delay: int | None) -> datetime | None:
+    if value is None:
+        return None
+    if delay is None:
+        return value
+    return value + timedelta(minutes=delay)
+
+
+def build_route_timeline(
+    operation_points: list[dict[str, Any]],
+    schedule_points: list[dict[str, Any]],
+    operations_map: dict[str, Any],
+    global_map: dict[int, str],
+    selected_station_id: int,
+) -> tuple[list[dict[str, Any]], int | None]:
+    schedule_by_station = {
+        safe_int(point.get("stationId")): point
+        for point in schedule_points
+        if isinstance(point, dict) and point.get("stationId") is not None
+    }
+
+    last_confirmed_index = -1
+    current_delay: int | None = None
+
+    for index, point in enumerate(operation_points):
+        if not isinstance(point, dict):
+            continue
+
+        if point.get("isConfirmed"):
+            last_confirmed_index = index
+
+            planned_departure = parse_dt(point.get("plannedDeparture"))
+            actual_departure = parse_dt(point.get("actualDeparture"))
+            planned_arrival = parse_dt(point.get("plannedArrival"))
+            actual_arrival = parse_dt(point.get("actualArrival"))
+
+            departure_delay = delay_minutes(
+                planned_departure,
+                actual_departure,
+                point.get("departureDelayMinutes"),
+            )
+            arrival_delay = delay_minutes(
+                planned_arrival,
+                actual_arrival,
+                point.get("arrivalDelayMinutes"),
+            )
+
+            current_delay = (
+                departure_delay
+                if departure_delay is not None
+                else arrival_delay
+            )
+
+    timeline: list[dict[str, Any]] = []
+
+    for index, point in enumerate(operation_points):
+        if not isinstance(point, dict):
+            continue
+
+        station_id = safe_int(point.get("stationId"), -1)
+        if station_id < 0:
+            continue
+
+        schedule_point = schedule_by_station.get(station_id, {})
+        planned_arrival = parse_dt(point.get("plannedArrival"))
+        planned_departure = parse_dt(point.get("plannedDeparture"))
+        actual_arrival = parse_dt(point.get("actualArrival"))
+        actual_departure = parse_dt(point.get("actualDeparture"))
+
+        arrival_delay = delay_minutes(
+            planned_arrival,
+            actual_arrival,
+            point.get("arrivalDelayMinutes"),
+        )
+        departure_delay = delay_minutes(
+            planned_departure,
+            actual_departure,
+            point.get("departureDelayMinutes"),
+        )
+
+        if index < last_confirmed_index:
+            status = "passed"
+        elif index == last_confirmed_index and last_confirmed_index >= 0:
+            status = "current"
+        else:
+            status = "future"
+
+        estimated_arrival = None
+        estimated_departure = None
+
+        if status == "future" and current_delay is not None:
+            estimated_arrival = add_delay(planned_arrival, current_delay)
+            estimated_departure = add_delay(planned_departure, current_delay)
+
+        platform = str(
+            schedule_point.get(
+                "departurePlatform",
+                schedule_point.get("arrivalPlatform", ""),
+            )
+            or ""
+        )
+        track = str(
+            schedule_point.get(
+                "departureTrack",
+                schedule_point.get("arrivalTrack", ""),
+            )
+            or ""
+        )
+
+        timeline.append(
+            {
+                "station_id": station_id,
+                "name": get_name(station_id, operations_map, global_map),
+                "selected": station_id == selected_station_id,
+                "status": status,
+                "planned_arrival": planned_arrival,
+                "planned_departure": planned_departure,
+                "actual_arrival": actual_arrival if point.get("isConfirmed") else None,
+                "actual_departure": actual_departure if point.get("isConfirmed") else None,
+                "arrival_delay": arrival_delay if point.get("isConfirmed") else None,
+                "departure_delay": departure_delay if point.get("isConfirmed") else None,
+                "estimated_arrival": estimated_arrival,
+                "estimated_departure": estimated_departure,
+                "platform": platform,
+                "track": track,
+                "confirmed": bool(point.get("isConfirmed")),
+            }
+        )
+
+    return timeline, current_delay
+
+
+def delay_css(value: int | None) -> str:
+    if value is None or value == 0:
+        return "route-delay-ok"
+    return "route-delay-warn"
+
+
+def render_route_timeline(train: dict[str, Any]) -> None:
+    timeline = train.get("route_timeline", [])
+
+    if not timeline:
+        st.info("Brak szczegółowych danych o pełnej trasie tego pociągu.")
+        return
+
+    current_delay = train.get("route_current_delay")
+    summary_parts = [
+        f"Liczba punktów trasy: {len(timeline)}",
+    ]
+
+    if current_delay is not None:
+        summary_parts.append(f"Aktualne opóźnienie: {fmt_delay(current_delay)}")
+
+    summary_parts.append(
+        "Czasy przyszłe są szacowane przez dodanie aktualnego opóźnienia do rozkładu."
+    )
+
+    st.markdown(
+        f'<div class="route-summary">{html.escape(" · ".join(summary_parts))}</div>',
+        unsafe_allow_html=True,
+    )
+
+    rows: list[str] = []
+
+    for stop in timeline:
+        status = stop["status"]
+        icon = "✅" if status == "passed" else "🚆" if status == "current" else "○"
+        selected_badge = " · wybrana stacja" if stop.get("selected") else ""
+
+        meta_parts: list[str] = []
+        if stop.get("platform"):
+            meta_parts.append(f'peron {stop["platform"]}')
+        if stop.get("track"):
+            meta_parts.append(f'tor {stop["track"]}')
+        meta_text = " · ".join(meta_parts)
+
+        time_lines: list[str] = []
+
+        if stop["planned_arrival"] is not None:
+            time_lines.append(
+                f'Plan przyjazd: <strong>{fmt_clock(stop["planned_arrival"])}</strong>'
+            )
+        if stop["planned_departure"] is not None:
+            time_lines.append(
+                f'Plan odjazd: <strong>{fmt_clock(stop["planned_departure"])}</strong>'
+            )
+
+        if stop["actual_arrival"] is not None:
+            delay_text = fmt_delay(stop["arrival_delay"])
+            time_lines.append(
+                f'Rzeczywisty przyjazd: <strong>{fmt_clock(stop["actual_arrival"])}</strong> '
+                f'<span class="{delay_css(stop["arrival_delay"])}">({html.escape(delay_text)})</span>'
+            )
+        if stop["actual_departure"] is not None:
+            delay_text = fmt_delay(stop["departure_delay"])
+            time_lines.append(
+                f'Rzeczywisty odjazd: <strong>{fmt_clock(stop["actual_departure"])}</strong> '
+                f'<span class="{delay_css(stop["departure_delay"])}">({html.escape(delay_text)})</span>'
+            )
+
+        if status == "future":
+            if stop["estimated_arrival"] is not None:
+                time_lines.append(
+                    f'<span class="route-estimate">Szacowany przyjazd: '
+                    f'{fmt_clock(stop["estimated_arrival"])}</span>'
+                )
+            if stop["estimated_departure"] is not None:
+                time_lines.append(
+                    f'<span class="route-estimate">Szacowany odjazd: '
+                    f'{fmt_clock(stop["estimated_departure"])}</span>'
+                )
+
+        rows.append(
+            f'<div class="route-stop {status}">'
+            f'<div class="route-icon">{icon}</div>'
+            f'<div><div class="route-name">{html.escape(stop["name"])}'
+            f'{html.escape(selected_badge)}</div>'
+            f'<div class="route-meta">{html.escape(meta_text)}</div></div>'
+            f'<div class="route-times">{"<br>".join(time_lines)}</div>'
+            f'</div>'
+        )
+
+    st.markdown(
+        '<div class="route-list">' + "".join(rows) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def convert_train(train: dict[str, Any], route: dict[str, Any] | None, station_id: int, operations_map: dict[str, Any], global_map: dict[int, str], dictionaries: dict[str, Any]) -> dict[str, Any] | None:
     point = find_point(train, station_id)
     if point is None:
@@ -320,6 +555,13 @@ def convert_train(train: dict[str, Any], route: dict[str, Any] | None, station_i
         "endpoint_name": endpoint_name, "endpoint_icon": endpoint_icon, "endpoint_css": endpoint_css,
         "restriction": restriction, "confirmed": bool(point.get("isConfirmed", False)),
         "last_confirmed_station": confirmed_station, "last_confirmed_time": confirmed_time,
+        "_operation_points": [point for point in train.get("stations", []) if isinstance(point, dict)],
+        "_schedule_points": [point for point in route.get("stations", []) if isinstance(point, dict)] if isinstance(route, dict) else [],
+        "_operations_map": operations_map,
+        "_global_map": global_map,
+        "_selected_station_id": station_id,
+        "route_timeline": [],
+        "route_current_delay": None,
     }
 
 
@@ -358,6 +600,23 @@ def get_live_trains(station_id: int, global_map: dict[int, str], limit: int):
         details, _, _ = get_route_details(item["schedule_id"], item["order_id"])
         if isinstance(details, dict):
             item["train_name"] = " ".join(str(details.get("name") or "").split())
+            details_points = [
+                point
+                for point in details.get("stations", [])
+                if isinstance(point, dict)
+            ]
+        else:
+            details_points = item.get("_schedule_points", [])
+
+        route_timeline, route_current_delay = build_route_timeline(
+            item.get("_operation_points", []),
+            details_points,
+            item.get("_operations_map", {}),
+            item.get("_global_map", {}),
+            item.get("_selected_station_id", station_id),
+        )
+        item["route_timeline"] = route_timeline
+        item["route_current_delay"] = route_current_delay
 
     return selected, "live", 200, "", parse_generated(operations.get("generatedAt"))
 
@@ -556,4 +815,11 @@ for train in trains:
                     note += f' · {train["last_confirmed_time"]:%H:%M:%S}'
                 st.markdown(f'<div class="note">{note}</div>', unsafe_allow_html=True)
 
-st.caption("Dane: PKP Polskie Linie Kolejowe S.A. • nazwy pociągów pobierane ze szczegółów trasy")
+        expander_title = f'🗺️ Pokaż całą trasę — {train["train_number"]}'
+        if train["train_name"]:
+            expander_title += f' „{train["train_name"]}”'
+
+        with st.expander(expander_title, expanded=False):
+            render_route_timeline(train)
+
+st.caption("Dane: PKP Polskie Linie Kolejowe S.A. • nazwy pociągów pobierane ze szczegółów trasy • przyszłe czasy na trasie są szacowane na podstawie bieżącego opóźnienia")
