@@ -10,7 +10,7 @@ import requests
 import streamlit as st
 from supabase import Client, create_client
 
-st.set_page_config(page_title="Ruch Pociągów", page_icon="🚆", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="MINI SWDR", page_icon="🚆", layout="wide", initial_sidebar_state="collapsed")
 
 PROFILE_ID = "adrian"
 API = "https://pdp-api.plk-sa.pl/api/v1"
@@ -26,7 +26,7 @@ DEFAULT_FAVORITES = ["Kamień Pomorski", "Wysoka Kamieńska", "Gryfice", "Goleni
 st.markdown("""
 <style>
 .block-container{max-width:1180px;padding-top:2.2rem;padding-bottom:2rem}
-.title{font-size:2.3rem;font-weight:800;line-height:1.1}.sub{color:#a8adb7;margin:.2rem 0 1rem}
+.title{font-size:2.3rem;font-weight:800;line-height:1.1;margin-bottom:.2rem}.subtitle{color:#a8adb7;font-size:1rem;margin-bottom:1.1rem}
 .banner{border-radius:10px;padding:.7rem .9rem;margin-bottom:1rem}.ok{background:rgba(46,160,67,.14);border:1px solid rgba(46,160,67,.38)}
 .warn{background:rgba(255,179,71,.12);border:1px solid rgba(255,179,71,.35)}.err{background:rgba(220,53,69,.13);border:1px solid rgba(220,53,69,.35)}
 .station{font-size:1.4rem;font-weight:750}.muted{color:#a8adb7;font-size:.84rem}.time{font-size:2rem;font-weight:800;line-height:1}
@@ -457,8 +457,7 @@ with st.sidebar:
         st.error("Nie udało się zapisać ustawień.")
         st.caption(st.session_state.settings_error)
 
-st.markdown('<div class="title">🚆 Ruch Pociągów</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub">Techniczna tablica ruchu dla wybranej stacji</div>', unsafe_allow_html=True)
+st.markdown('<div class="title">🚆 MINI SWDR</div><div class="subtitle">stworzony przez Adriana</div>', unsafe_allow_html=True)
 
 head_left, head_right = st.columns([3, 1])
 with head_left:
@@ -504,8 +503,7 @@ for train in trains:
     with st.container(border=True):
         left, right = st.columns([3.3, 1])
         with left:
-            seconds = train["movement"] == "Przejazd bez postoju" or train["actual_ref"].second != 0
-            st.markdown(f'<div class="time">{fmt_clock(train["actual_ref"], seconds)}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="time">{fmt_clock(train["actual_ref"])}</div>', unsafe_allow_html=True)
             time_parts = []
             if train["planned_arrival"] is not None:
                 time_parts.append(f'Przyjazd {fmt_clock(train["planned_arrival"])} ({fmt_delay(train["arrival_delay"])})')
