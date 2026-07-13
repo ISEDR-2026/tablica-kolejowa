@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-import re
 import unicodedata
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 import streamlit as st
@@ -12,7 +12,7 @@ from supabase import Client, create_client
 
 
 # ============================================================
-# KONFIGURACJA
+# KONFIGURACJA APLIKACJI
 # ============================================================
 
 st.set_page_config(
@@ -25,7 +25,12 @@ st.set_page_config(
 PROFILE_ID = "adrian"
 
 PKP_API_BASE_URL = "https://pdp-api.plk-sa.pl/api/v1"
-PKP_REQUEST_TIMEOUT = 20
+PKP_REQUEST_TIMEOUT = 30
+PKP_CACHE_SECONDS = 90
+
+WARSAW_TIMEZONE = ZoneInfo("Europe/Warsaw")
+
+NUMBER_OF_TRAINS = 5
 
 DEFAULT_FAVORITES = [
     "Kamień Pomorski",
@@ -54,11 +59,9 @@ AVAILABLE_STATIONS = [
     "Wysoka Kamieńska",
 ]
 
-NUMBER_OF_TRAINS = 5
-
 
 # ============================================================
-# STYL
+# STYL APLIKACJI
 # ============================================================
 
 st.markdown(
@@ -96,7 +99,7 @@ st.markdown(
             border: 1px solid rgba(46, 160, 67, 0.38);
         }
 
-        .api-test {
+        .api-warning {
             background: rgba(255, 179, 71, 0.12);
             border: 1px solid rgba(255, 179, 71, 0.35);
         }
@@ -136,7 +139,7 @@ st.markdown(
         .train-details {
             color: #A8ADB7;
             font-size: 0.84rem;
-            line-height: 1.2;
+            line-height: 1.25;
         }
 
         .eta-time {
@@ -173,10 +176,10 @@ st.markdown(
             border: 1px solid rgba(190, 150, 20, 0.30);
         }
 
-        .status-cancelled {
-            background: rgba(220, 53, 69, 0.22);
-            color: #FF9AA8;
-            border: 1px solid rgba(220, 53, 69, 0.30);
+        .status-early {
+            background: rgba(65, 130, 220, 0.20);
+            color: #9CC8FF;
+            border: 1px solid rgba(65, 130, 220, 0.30);
         }
 
         div[data-testid="stButton"] > button {
@@ -239,177 +242,72 @@ st.markdown(
 
 
 # ============================================================
+# CZAS
+# ============================================================
+
+def now_warsaw() -> datetime:
+    return datetime.now(WARSAW_TIMEZONE)
+
+
+def today_warsaw() -> date:
+    return now_warsaw().date()
+
+
+def parse_local_datetime(value: Any) -> datetime | None:
+    """
+    Czasy przejazdów zwracane przez API mają postać lokalną,
+    np. 2026-07-13T06:21:00, bez oznaczenia strefy.
+    Interpretujemy je jako Europe/Warsaw.
+    """
+
+    if value in (None, ""):
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=WARSAW_TIMEZONE)
+
+    return parsed.astimezone(WARSAW_TIMEZONE)
+
+
+def parse_generated_at(value: Any) -> datetime | None:
+    """
+    generatedAt kończy się literą Z, czyli jest podany w UTC.
+    """
+
+    if value in (None, ""):
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        )
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed.astimezone(WARSAW_TIMEZONE)
+
+
+# ============================================================
 # FUNKCJE POMOCNICZE
 # ============================================================
 
 def normalize_text(value: Any) -> str:
     text = str(value or "").strip().lower()
-    text = unicodedata.normalize("NFKD", text)
+    normalized = unicodedata.normalize("NFKD", text)
 
     return "".join(
         character
-        for character in text
+        for character in normalized
         if not unicodedata.combining(character)
     )
-
-
-def first_value(
-    record: dict[str, Any],
-    names: list[str],
-    default: Any = None,
-) -> Any:
-    normalized_record = {
-        normalize_text(key).replace("_", "").replace("-", ""): value
-        for key, value in record.items()
-    }
-
-    for name in names:
-        normalized_name = (
-            normalize_text(name)
-            .replace("_", "")
-            .replace("-", "")
-        )
-
-        if normalized_name in normalized_record:
-            value = normalized_record[normalized_name]
-
-            if value not in (None, ""):
-                return value
-
-    return default
-
-
-def extract_records(payload: Any) -> list[dict[str, Any]]:
-    if isinstance(payload, list):
-        return [
-            item
-            for item in payload
-            if isinstance(item, dict)
-        ]
-
-    if not isinstance(payload, dict):
-        return []
-
-    preferred_keys = [
-        "data",
-        "items",
-        "results",
-        "records",
-        "operations",
-        "schedules",
-        "stations",
-        "value",
-    ]
-
-    for key in preferred_keys:
-        value = payload.get(key)
-
-        if isinstance(value, list):
-            return [
-                item
-                for item in value
-                if isinstance(item, dict)
-            ]
-
-        if isinstance(value, dict):
-            nested = extract_records(value)
-
-            if nested:
-                return nested
-
-    for value in payload.values():
-        if isinstance(value, list):
-            records = [
-                item
-                for item in value
-                if isinstance(item, dict)
-            ]
-
-            if records:
-                return records
-
-        if isinstance(value, dict):
-            nested = extract_records(value)
-
-            if nested:
-                return nested
-
-    return []
-
-
-def parse_datetime_value(value: Any) -> datetime | None:
-    if value in (None, ""):
-        return None
-
-    if isinstance(value, datetime):
-        result = value
-    else:
-        text = str(value).strip()
-
-        if not text:
-            return None
-
-        text = text.replace("Z", "+00:00")
-
-        result = None
-
-        formats = [
-            "%Y-%m-%dT%H:%M:%S.%f%z",
-            "%Y-%m-%dT%H:%M:%S%z",
-            "%Y-%m-%dT%H:%M:%S.%f",
-            "%Y-%m-%dT%H:%M:%S",
-            "%Y-%m-%d %H:%M:%S",
-            "%Y-%m-%d %H:%M",
-            "%H:%M:%S",
-            "%H:%M",
-        ]
-
-        try:
-            result = datetime.fromisoformat(text)
-        except ValueError:
-            for date_format in formats:
-                try:
-                    parsed = datetime.strptime(
-                        text,
-                        date_format,
-                    )
-
-                    if parsed.year == 1900:
-                        now = datetime.now()
-                        parsed = parsed.replace(
-                            year=now.year,
-                            month=now.month,
-                            day=now.day,
-                        )
-
-                    result = parsed
-                    break
-
-                except ValueError:
-                    continue
-
-        if result is None:
-            time_match = re.search(
-                r"\b([01]?\d|2[0-3]):([0-5]\d)\b",
-                text,
-            )
-
-            if time_match:
-                now = datetime.now()
-
-                result = now.replace(
-                    hour=int(time_match.group(1)),
-                    minute=int(time_match.group(2)),
-                    second=0,
-                    microsecond=0,
-                )
-
-    if result.tzinfo is not None:
-        result = result.astimezone().replace(
-            tzinfo=None
-        )
-
-    return result
 
 
 def safe_int(value: Any, default: int = 0) -> int:
@@ -417,6 +315,59 @@ def safe_int(value: Any, default: int = 0) -> int:
         return int(float(str(value).replace(",", ".")))
     except (TypeError, ValueError):
         return default
+
+
+def dictionary_value(
+    dictionary: Any,
+    key: Any,
+    default: str,
+) -> str:
+    if not isinstance(dictionary, dict):
+        return default
+
+    key_text = str(key)
+
+    value = dictionary.get(key_text)
+
+    if value in (None, ""):
+        value = dictionary.get(key)
+
+    return str(value) if value not in (None, "") else default
+
+
+def route_key(record: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(record.get("scheduleId", "")),
+        str(record.get("orderId", "")),
+        str(record.get("trainOrderId", "")),
+    )
+
+
+def station_name_from_map(
+    station_map: dict[str, Any],
+    station_id: Any,
+) -> str:
+    return dictionary_value(
+        station_map,
+        station_id,
+        f"Stacja {station_id}",
+    )
+
+
+def calculate_delay_minutes(
+    planned_time: datetime | None,
+    actual_time: datetime | None,
+    api_delay: Any = None,
+) -> int:
+    if api_delay not in (None, ""):
+        return safe_int(api_delay, 0)
+
+    if planned_time is None or actual_time is None:
+        return 0
+
+    difference = actual_time - planned_time
+
+    return int(round(difference.total_seconds() / 60))
 
 
 # ============================================================
@@ -431,9 +382,7 @@ def get_supabase_client() -> Client | None:
         )
 
     except Exception as error:
-        st.error(
-            "Nie udało się połączyć z Supabase."
-        )
+        st.error("Nie udało się połączyć z Supabase.")
         st.caption(str(error))
         return None
 
@@ -478,9 +427,7 @@ def load_settings() -> tuple[list[str], str]:
             ]
 
             if not valid_favorites:
-                valid_favorites = (
-                    DEFAULT_FAVORITES.copy()
-                )
+                valid_favorites = DEFAULT_FAVORITES.copy()
 
             if selected_station not in AVAILABLE_STATIONS:
                 selected_station = valid_favorites[0]
@@ -489,7 +436,8 @@ def load_settings() -> tuple[list[str], str]:
 
     except Exception as error:
         st.warning(
-            "Nie udało się odczytać ustawień."
+            "Nie udało się odczytać ustawień. "
+            "Używam wartości domyślnych."
         )
         st.caption(str(error))
 
@@ -510,9 +458,7 @@ def save_settings() -> bool:
             "selected_station": (
                 st.session_state.selected_station
             ),
-            "updated_at": (
-                datetime.now(timezone.utc).isoformat()
-            ),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
         (
@@ -526,6 +472,8 @@ def save_settings() -> bool:
         )
 
         st.session_state.settings_saved = True
+        st.session_state.settings_error = ""
+
         return True
 
     except Exception as error:
@@ -556,6 +504,12 @@ def choose_station(station: str) -> None:
     save_settings()
 
 
+def handle_station_select() -> None:
+    choose_station(
+        st.session_state.main_station_selector
+    )
+
+
 def add_favorite() -> None:
     station = st.session_state.station_to_add
 
@@ -582,20 +536,13 @@ def remove_favorite(station: str) -> None:
     save_settings()
 
 
-def handle_station_select() -> None:
-    choose_station(
-        st.session_state.main_station_selector
-    )
-
-
 # ============================================================
 # API PKP PLK
 # ============================================================
 
 def get_pkp_headers() -> dict[str, str]:
     return {
-        "X-API-Key": st.secrets["PKP_API_KEY"],
-        "Content-Type": "application/json",
+        "X-API-Key": str(st.secrets["PKP_API_KEY"]).strip(),
         "Accept": "application/json",
     }
 
@@ -603,7 +550,7 @@ def get_pkp_headers() -> dict[str, str]:
 def pkp_request(
     endpoint: str,
     params: dict[str, Any] | None = None,
-) -> tuple[Any | None, int, str]:
+) -> tuple[dict[str, Any] | None, int, str]:
     try:
         response = requests.get(
             f"{PKP_API_BASE_URL}{endpoint}",
@@ -617,10 +564,12 @@ def pkp_request(
 
     if response.status_code != 200:
         try:
-            error_payload = response.json()
+            payload = response.json()
+
             message = (
-                error_payload.get("message")
-                or error_payload.get("error")
+                payload.get("message")
+                or payload.get("messageEn")
+                or payload.get("error")
                 or response.text
             )
         except ValueError:
@@ -629,335 +578,475 @@ def pkp_request(
         return (
             None,
             response.status_code,
-            str(message)[:500],
+            str(message)[:600],
         )
 
     try:
-        return response.json(), 200, ""
-
+        payload = response.json()
     except ValueError:
         return (
             None,
             response.status_code,
-            "API zwróciło nieprawidłowy JSON.",
+            "API zwróciło odpowiedź, która nie jest JSON-em.",
         )
+
+    if not isinstance(payload, dict):
+        return (
+            None,
+            response.status_code,
+            "API zwróciło nieoczekiwaną strukturę danych.",
+        )
+
+    return payload, response.status_code, ""
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_station_id(
     station_name: str,
-) -> tuple[str | None, int, str]:
-    payload, status_code, error_message = (
-        pkp_request(
-            "/dictionaries/stations",
-            params={
-                "search": station_name,
-                "page": 1,
-                "pageSize": 50,
-            },
-        )
+) -> tuple[int | None, int, str]:
+    payload, status_code, error_message = pkp_request(
+        "/dictionaries/stations",
+        params={
+            "search": station_name,
+            "page": 1,
+            "pageSize": 50,
+        },
     )
 
-    if status_code != 200:
+    if payload is None:
         return None, status_code, error_message
 
-    records = extract_records(payload)
+    stations = payload.get("stations", [])
+
+    if not isinstance(stations, list):
+        return (
+            None,
+            500,
+            "API nie zwróciło listy stations.",
+        )
 
     normalized_target = normalize_text(station_name)
+    partial_match: int | None = None
 
-    best_station_id = None
-
-    for record in records:
-        name = first_value(
-            record,
-            [
-                "name",
-                "stationName",
-                "station",
-                "nazwa",
-                "nazwaStacji",
-            ],
-        )
-
-        station_id = first_value(
-            record,
-            [
-                "id",
-                "stationId",
-                "stationCode",
-                "code",
-                "identyfikator",
-            ],
-        )
-
-        if station_id is None:
+    for station in stations:
+        if not isinstance(station, dict):
             continue
 
-        normalized_name = normalize_text(name)
+        station_id = station.get("id")
+        returned_name = station.get("name")
 
-        if normalized_name == normalized_target:
-            return str(station_id), 200, ""
+        if station_id is None or returned_name is None:
+            continue
+
+        normalized_returned = normalize_text(returned_name)
+
+        if normalized_returned == normalized_target:
+            return safe_int(station_id), 200, ""
 
         if (
-            normalized_target in normalized_name
-            or normalized_name in normalized_target
+            normalized_target in normalized_returned
+            or normalized_returned in normalized_target
         ):
-            best_station_id = str(station_id)
+            partial_match = safe_int(station_id)
 
-    if best_station_id is not None:
-        return best_station_id, 200, ""
+    if partial_match is not None:
+        return partial_match, 200, ""
 
     return (
         None,
         404,
-        f"Nie znaleziono ID stacji: {station_name}",
+        f"Nie znaleziono stacji: {station_name}",
     )
 
 
-def operation_to_train(
-    record: dict[str, Any],
-    selected_station: str,
+@st.cache_data(
+    ttl=PKP_CACHE_SECONDS,
+    show_spinner=False,
+)
+def get_operations(
+    station_id: int,
+) -> tuple[dict[str, Any] | None, int, str]:
+    return pkp_request(
+        "/operations",
+        params={
+            "stations": station_id,
+            "withPlanned": "true",
+            "fullRoutes": "true",
+            "page": 1,
+            "pageSize": 1000,
+        },
+    )
+
+
+@st.cache_data(
+    ttl=PKP_CACHE_SECONDS,
+    show_spinner=False,
+)
+def get_schedules(
+    station_id: int,
+    date_from: str,
+    date_to: str,
+) -> tuple[dict[str, Any] | None, int, str]:
+    return pkp_request(
+        "/schedules",
+        params={
+            "stations": station_id,
+            "dateFrom": date_from,
+            "dateTo": date_to,
+            "page": 1,
+            "pageSize": 1000,
+        },
+    )
+
+
+# ============================================================
+# ŁĄCZENIE OPERATIONS + SCHEDULES
+# ============================================================
+
+def build_schedule_map(
+    schedules_payload: dict[str, Any],
+) -> dict[tuple[str, str, str], dict[str, Any]]:
+    routes = schedules_payload.get("routes", [])
+
+    if not isinstance(routes, list):
+        return {}
+
+    result: dict[
+        tuple[str, str, str],
+        dict[str, Any],
+    ] = {}
+
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+
+        result[route_key(route)] = route
+
+    return result
+
+
+def find_station_event(
+    train: dict[str, Any],
+    station_id: int,
 ) -> dict[str, Any] | None:
-    nested_station = first_value(
-        record,
-        [
-            "station",
-            "stationData",
-            "location",
-            "point",
-        ],
+    stations = train.get("stations", [])
+
+    if not isinstance(stations, list):
+        return None
+
+    for station in stations:
+        if not isinstance(station, dict):
+            continue
+
+        if safe_int(station.get("stationId")) == station_id:
+            return station
+
+    return None
+
+
+def find_schedule_station(
+    route: dict[str, Any] | None,
+    station_id: int,
+) -> dict[str, Any] | None:
+    if not isinstance(route, dict):
+        return None
+
+    stations = route.get("stations", [])
+
+    if not isinstance(stations, list):
+        return None
+
+    for station in stations:
+        if not isinstance(station, dict):
+            continue
+
+        if safe_int(station.get("stationId")) == station_id:
+            return station
+
+    return None
+
+
+def get_train_direction(
+    train: dict[str, Any],
+    station_id: int,
+    station_map: dict[str, Any],
+) -> tuple[str, str]:
+    stations = train.get("stations", [])
+
+    if not isinstance(stations, list) or not stations:
+        return "Kierunek nieznany", "→"
+
+    valid_stations = [
+        station
+        for station in stations
+        if isinstance(station, dict)
+        and station.get("stationId") is not None
+    ]
+
+    if not valid_stations:
+        return "Kierunek nieznany", "→"
+
+    first_station_id = valid_stations[0].get("stationId")
+    last_station_id = valid_stations[-1].get("stationId")
+
+    first_name = station_name_from_map(
+        station_map,
+        first_station_id,
+    )
+
+    last_name = station_name_from_map(
+        station_map,
+        last_station_id,
+    )
+
+    if safe_int(last_station_id) == station_id:
+        return f"z {first_name}", "←"
+
+    return last_name, "→"
+
+
+def select_event_times(
+    station_event: dict[str, Any],
+) -> tuple[
+    datetime | None,
+    datetime | None,
+    str,
+]:
+    planned_departure = parse_local_datetime(
+        station_event.get("plannedDeparture")
+    )
+
+    actual_departure = parse_local_datetime(
+        station_event.get("actualDeparture")
+    )
+
+    planned_arrival = parse_local_datetime(
+        station_event.get("plannedArrival")
+    )
+
+    actual_arrival = parse_local_datetime(
+        station_event.get("actualArrival")
+    )
+
+    if planned_departure is not None:
+        return (
+            planned_departure,
+            actual_departure or planned_departure,
+            "odjazd",
+        )
+
+    if planned_arrival is not None:
+        return (
+            planned_arrival,
+            actual_arrival or planned_arrival,
+            "przyjazd",
+        )
+
+    return None, None, "przejazd"
+
+
+def convert_train_record(
+    operation_train: dict[str, Any],
+    schedule_route: dict[str, Any] | None,
+    selected_station_id: int,
+    operation_station_map: dict[str, Any],
+    schedule_dictionaries: dict[str, Any],
+) -> dict[str, Any] | None:
+    station_event = find_station_event(
+        operation_train,
+        selected_station_id,
+    )
+
+    if station_event is None:
+        return None
+
+    planned_time, actual_time, event_type = (
+        select_event_times(station_event)
+    )
+
+    if planned_time is None or actual_time is None:
+        return None
+
+    schedule_station = find_schedule_station(
+        schedule_route,
+        selected_station_id,
+    )
+
+    carriers = schedule_dictionaries.get(
+        "carriers",
         {},
     )
 
-    if isinstance(nested_station, dict):
-        merged_record = {
-            **record,
-            **{
-                f"nested_{key}": value
-                for key, value in nested_station.items()
-            },
-        }
+    categories = schedule_dictionaries.get(
+        "commercialCategories",
+        {},
+    )
+
+    carrier_code = ""
+
+    if isinstance(schedule_route, dict):
+        carrier_code = str(
+            schedule_route.get("carrierCode", "")
+        )
+
+    carrier_name = dictionary_value(
+        carriers,
+        carrier_code,
+        carrier_code or "Przewoźnik nieznany",
+    )
+
+    category_symbol = ""
+
+    if isinstance(schedule_route, dict):
+        category_symbol = str(
+            schedule_route.get(
+                "commercialCategorySymbol",
+                "",
+            )
+        )
+
+    category_name = dictionary_value(
+        categories,
+        category_symbol,
+        category_symbol,
+    )
+
+    national_number = ""
+
+    if isinstance(schedule_route, dict):
+        national_number = str(
+            schedule_route.get("nationalNumber", "")
+        )
+
+    if not national_number:
+        national_number = str(
+            operation_train.get("trainOrderId", "—")
+        )
+
+    train_label = " ".join(
+        part
+        for part in [
+            category_symbol,
+            national_number,
+        ]
+        if part
+    ).strip()
+
+    if not train_label:
+        train_label = national_number or "—"
+
+    platform = "—"
+    track = ""
+
+    if isinstance(schedule_station, dict):
+        if event_type == "przyjazd":
+            platform = str(
+                schedule_station.get(
+                    "arrivalPlatform",
+                    schedule_station.get(
+                        "departurePlatform",
+                        "—",
+                    ),
+                )
+            )
+
+            track = str(
+                schedule_station.get(
+                    "arrivalTrack",
+                    schedule_station.get(
+                        "departureTrack",
+                        "",
+                    ),
+                )
+            )
+        else:
+            platform = str(
+                schedule_station.get(
+                    "departurePlatform",
+                    schedule_station.get(
+                        "arrivalPlatform",
+                        "—",
+                    ),
+                )
+            )
+
+            track = str(
+                schedule_station.get(
+                    "departureTrack",
+                    schedule_station.get(
+                        "arrivalTrack",
+                        "",
+                    ),
+                )
+            )
+
+    if event_type == "przyjazd":
+        api_delay = station_event.get(
+            "arrivalDelayMinutes"
+        )
     else:
-        merged_record = record
-
-    station_name = first_value(
-        merged_record,
-        [
-            "stationName",
-            "name",
-            "nazwaStacji",
-            "nested_name",
-            "nested_stationName",
-        ],
-        selected_station,
-    )
-
-    planned_time = parse_datetime_value(
-        first_value(
-            merged_record,
-            [
-                "plannedDeparture",
-                "plannedDepartureTime",
-                "plannedArrival",
-                "plannedArrivalTime",
-                "plannedTime",
-                "scheduledTime",
-                "timetableTime",
-                "departureTimePlanned",
-                "arrivalTimePlanned",
-            ],
-        )
-    )
-
-    actual_time = parse_datetime_value(
-        first_value(
-            merged_record,
-            [
-                "estimatedDeparture",
-                "estimatedDepartureTime",
-                "actualDeparture",
-                "actualDepartureTime",
-                "estimatedArrival",
-                "estimatedArrivalTime",
-                "actualArrival",
-                "actualArrivalTime",
-                "currentTime",
-                "realTime",
-            ],
-        )
-    )
-
-    delay = safe_int(
-        first_value(
-            merged_record,
-            [
-                "delay",
-                "delayMinutes",
-                "departureDelay",
-                "arrivalDelay",
-                "calculatedDelay",
-            ],
-            0,
-        ),
-        0,
-    )
-
-    if actual_time is None and planned_time is not None:
-        actual_time = (
-            planned_time
-            + timedelta(minutes=delay)
+        api_delay = station_event.get(
+            "departureDelayMinutes"
         )
 
-    if planned_time is None and actual_time is not None:
-        planned_time = (
-            actual_time
-            - timedelta(minutes=delay)
-        )
-
-    if actual_time is None:
-        return None
-
-    destination = first_value(
-        merged_record,
-        [
-            "destination",
-            "destinationName",
-            "finalStation",
-            "finalStationName",
-            "toStation",
-            "direction",
-            "kierunek",
-            "endStation",
-        ],
-        "Kierunek nieznany",
+    delay_minutes = calculate_delay_minutes(
+        planned_time,
+        actual_time,
+        api_delay,
     )
 
-    train_number = first_value(
-        merged_record,
-        [
-            "trainNumber",
-            "commercialTrainNumber",
-            "number",
-            "nrPociagu",
-            "serviceNumber",
-        ],
-        "—",
+    direction, direction_symbol = get_train_direction(
+        operation_train,
+        selected_station_id,
+        operation_station_map,
     )
 
-    category = first_value(
-        merged_record,
-        [
-            "commercialCategory",
-            "commercialCategoryCode",
-            "category",
-            "trainCategory",
-        ],
-        "",
-    )
-
-    carrier = first_value(
-        merged_record,
-        [
-            "carrierName",
-            "carrier",
-            "operatorName",
-            "operator",
-            " przewoznik",
-        ],
-        "Przewoźnik",
-    )
-
-    platform = first_value(
-        merged_record,
-        [
-            "platform",
-            "platformNumber",
-            "peron",
-        ],
-        "—",
-    )
-
-    track = first_value(
-        merged_record,
-        [
-            "track",
-            "trackNumber",
-            "tor",
-        ],
-        "",
-    )
-
-    cancelled_value = first_value(
-        merged_record,
-        [
-            "cancelled",
-            "isCancelled",
-            "canceled",
-            "isCanceled",
-        ],
-        False,
-    )
-
-    status_value = str(
-        first_value(
-            merged_record,
-            [
-                "status",
-                "trainStatus",
-                "operationStatus",
-            ],
-            "",
-        )
-    ).lower()
-
-    cancelled = (
-        cancelled_value is True
-        or str(cancelled_value).lower() == "true"
-        or "cancel" in status_value
-        or "odwoł" in status_value
-        or "odwol" in status_value
-    )
-
-    display_number = str(train_number)
-
-    if category:
-        category_text = str(category).strip()
-
-        if not display_number.startswith(category_text):
-            display_number = (
-                f"{category_text} {display_number}"
-            ).strip()
-
-    now = datetime.now()
-
-    minutes_until = max(
-        0,
-        int(
-            (actual_time - now).total_seconds()
-            // 60
-        ),
+    minutes_until = int(
+        (actual_time - now_warsaw()).total_seconds()
+        // 60
     )
 
     return {
-        "station_name": str(station_name),
-        "planned_time": planned_time or actual_time,
-        "current_time": actual_time,
-        "minutes_until": minutes_until,
-        "direction": str(destination),
-        "train_number": display_number,
-        "carrier": str(carrier),
-        "delay": max(0, delay),
-        "platform": str(platform),
-        "track": str(track),
-        "cancelled": cancelled,
-        "raw": record,
+        "schedule_id": operation_train.get(
+            "scheduleId"
+        ),
+        "order_id": operation_train.get("orderId"),
+        "train_order_id": operation_train.get(
+            "trainOrderId"
+        ),
+        "planned_time": planned_time,
+        "actual_time": actual_time,
+        "minutes_until": max(0, minutes_until),
+        "direction": direction,
+        "direction_symbol": direction_symbol,
+        "train_number": train_label,
+        "carrier": carrier_name,
+        "carrier_code": carrier_code,
+        "category": category_name,
+        "category_symbol": category_symbol,
+        "platform": platform,
+        "track": track,
+        "delay": delay_minutes,
+        "event_type": event_type,
+        "confirmed": bool(
+            station_event.get("isConfirmed", False)
+        ),
     }
 
 
-@st.cache_data(ttl=90, show_spinner=False)
+@st.cache_data(
+    ttl=PKP_CACHE_SECONDS,
+    show_spinner=False,
+)
 def get_live_trains(
     station_name: str,
-) -> tuple[list[dict[str, Any]], str, int, str]:
+) -> tuple[
+    list[dict[str, Any]],
+    str,
+    int,
+    str,
+    datetime | None,
+]:
     station_id, status_code, error_message = (
         get_station_id(station_name)
     )
@@ -968,64 +1057,120 @@ def get_live_trains(
             "error",
             status_code,
             error_message,
+            None,
         )
 
-    payload, status_code, error_message = (
-        pkp_request(
-            "/operations",
-            params={
-                "stations": station_id,
-                "withPlanned": "true",
-                "fullRoutes": "true",
-                "page": 1,
-                "pageSize": 500,
-            },
-        )
+    local_today = today_warsaw()
+    local_tomorrow = local_today + timedelta(days=1)
+
+    operations_payload, operations_status, operations_error = (
+        get_operations(station_id)
     )
 
-    if status_code != 200:
+    if operations_payload is None:
         return (
             [],
             "error",
-            status_code,
-            error_message,
+            operations_status,
+            operations_error,
+            None,
         )
 
-    records = extract_records(payload)
-    trains: list[dict[str, Any]] = []
+    schedules_payload, schedules_status, schedules_error = (
+        get_schedules(
+            station_id,
+            local_today.isoformat(),
+            local_tomorrow.isoformat(),
+        )
+    )
 
-    now = datetime.now()
-    oldest_allowed = now - timedelta(minutes=3)
+    if schedules_payload is None:
+        return (
+            [],
+            "error",
+            schedules_status,
+            schedules_error,
+            parse_generated_at(
+                operations_payload.get("generatedAt")
+            ),
+        )
 
-    for record in records:
-        train = operation_to_train(
-            record,
-            station_name,
+    operation_trains = operations_payload.get(
+        "trains",
+        [],
+    )
+
+    if not isinstance(operation_trains, list):
+        return (
+            [],
+            "error",
+            500,
+            "API operations nie zwróciło pola trains.",
+            None,
+        )
+
+    operation_station_map = operations_payload.get(
+        "stations",
+        {},
+    )
+
+    if not isinstance(operation_station_map, dict):
+        operation_station_map = {}
+
+    schedule_map = build_schedule_map(
+        schedules_payload
+    )
+
+    dictionaries = schedules_payload.get(
+        "dictionaries",
+        {},
+    )
+
+    if not isinstance(dictionaries, dict):
+        dictionaries = {}
+
+    converted: list[dict[str, Any]] = []
+
+    oldest_allowed = now_warsaw() - timedelta(
+        minutes=2
+    )
+
+    for operation_train in operation_trains:
+        if not isinstance(operation_train, dict):
+            continue
+
+        schedule_route = schedule_map.get(
+            route_key(operation_train)
+        )
+
+        train = convert_train_record(
+            operation_train,
+            schedule_route,
+            station_id,
+            operation_station_map,
+            dictionaries,
         )
 
         if train is None:
             continue
 
-        if (
-            train["current_time"] < oldest_allowed
-            and not train["cancelled"]
-        ):
+        if train["actual_time"] < oldest_allowed:
             continue
 
-        trains.append(train)
+        converted.append(train)
 
-    trains.sort(
-        key=lambda train: train["current_time"]
+    converted.sort(
+        key=lambda train: train["actual_time"]
     )
 
     unique_trains: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
 
-    for train in trains:
+    for train in converted:
         unique_key = (
-            train["train_number"],
-            train["current_time"].strftime(
-                "%Y-%m-%d %H:%M"
+            str(train["train_order_id"]),
+            train["actual_time"].strftime(
+                "%Y-%m-%d %H:%M:%S"
             ),
             train["direction"],
         )
@@ -1036,183 +1181,16 @@ def get_live_trains(
         seen.add(unique_key)
         unique_trains.append(train)
 
+    generated_at = parse_generated_at(
+        operations_payload.get("generatedAt")
+    )
+
     return (
         unique_trains[:NUMBER_OF_TRAINS],
         "live",
         200,
         "",
-    )
-
-
-# ============================================================
-# DANE TESTOWE
-# ============================================================
-
-def stable_number(
-    text: str,
-    minimum: int,
-    maximum: int,
-) -> int:
-    digest = hashlib.sha256(
-        text.encode("utf-8")
-    ).hexdigest()
-
-    value = int(digest[:8], 16)
-
-    return minimum + value % (
-        maximum - minimum + 1
-    )
-
-
-def get_test_directions(
-    station: str,
-) -> list[str]:
-    directions: dict[str, list[str]] = {
-        "Kamień Pomorski": [
-            "Wysoka Kamieńska",
-            "Szczecin Główny",
-        ],
-        "Wysoka Kamieńska": [
-            "Kamień Pomorski",
-            "Świnoujście",
-            "Szczecin Główny",
-        ],
-        "Gryfice": [
-            "Kołobrzeg",
-            "Szczecin Główny",
-            "Trzebiatów",
-        ],
-        "Goleniów": [
-            "Szczecin Główny",
-            "Świnoujście",
-            "Kołobrzeg",
-            "Koszalin",
-        ],
-    }
-
-    return directions.get(
-        station,
-        [
-            "Szczecin Główny",
-            "Świnoujście",
-            "Kołobrzeg",
-        ],
-    )
-
-
-def generate_test_trains(
-    station: str,
-) -> list[dict[str, Any]]:
-    now = datetime.now()
-    current_minute = now.replace(
-        second=0,
-        microsecond=0,
-    )
-
-    directions = get_test_directions(station)
-    trains: list[dict[str, Any]] = []
-
-    for index in range(NUMBER_OF_TRAINS):
-        seed = (
-            f"{station}-"
-            f"{current_minute:%Y-%m-%d-%H}-"
-            f"{index}"
-        )
-
-        minutes_until = (
-            5
-            + index * 14
-            + stable_number(
-                f"{seed}-offset",
-                0,
-                7,
-            )
-        )
-
-        planned_time = (
-            current_minute
-            + timedelta(minutes=minutes_until)
-        )
-
-        delay_options = [0, 0, 0, 2, 4, 7]
-
-        delay = delay_options[
-            stable_number(
-                f"{seed}-delay",
-                0,
-                len(delay_options) - 1,
-            )
-        ]
-
-        current_time = (
-            planned_time
-            + timedelta(minutes=delay)
-        )
-
-        direction = directions[
-            stable_number(
-                f"{seed}-direction",
-                0,
-                len(directions) - 1,
-            )
-        ]
-
-        carrier = (
-            "POLREGIO"
-            if stable_number(
-                f"{seed}-carrier",
-                0,
-                4,
-            ) < 4
-            else "PKP Intercity"
-        )
-
-        category = (
-            "REG"
-            if carrier == "POLREGIO"
-            else "IC"
-        )
-
-        trains.append(
-            {
-                "planned_time": planned_time,
-                "current_time": current_time,
-                "minutes_until": max(
-                    0,
-                    int(
-                        (
-                            current_time - now
-                        ).total_seconds()
-                        // 60
-                    ),
-                ),
-                "direction": direction,
-                "train_number": (
-                    f"{category} "
-                    f"{stable_number(
-                        f'{seed}-number',
-                        80000,
-                        89999,
-                    )}"
-                ),
-                "carrier": carrier,
-                "delay": delay,
-                "platform": str(
-                    stable_number(
-                        f"{seed}-platform",
-                        1,
-                        3,
-                    )
-                ),
-                "track": "",
-                "cancelled": False,
-                "raw": {},
-            }
-        )
-
-    return sorted(
-        trains,
-        key=lambda train: train["current_time"],
+        generated_at,
     )
 
 
@@ -1227,6 +1205,11 @@ with st.sidebar:
         st.success(
             "Połączono z Supabase",
             icon="✅",
+        )
+    else:
+        st.error(
+            "Brak połączenia z Supabase",
+            icon="⚠️",
         )
 
     st.subheader("Ulubione stacje")
@@ -1249,6 +1232,12 @@ with st.sidebar:
             on_click=add_favorite,
             use_container_width=True,
         )
+    else:
+        st.info(
+            "Wszystkie dostępne stacje są już dodane."
+        )
+
+    st.divider()
 
     for index, station in enumerate(
         st.session_state.favorites.copy()
@@ -1278,11 +1267,22 @@ with st.sidebar:
         use_container_width=True,
     ):
         get_live_trains.clear()
+        get_operations.clear()
+        get_schedules.clear()
         get_station_id.clear()
 
     st.caption(
-        "Dane API są buforowane przez 90 sekund."
+        f"Dane API są buforowane przez "
+        f"{PKP_CACHE_SECONDS} sekund."
     )
+
+    if st.session_state.settings_error:
+        st.error(
+            "Nie udało się zapisać ustawień."
+        )
+        st.caption(
+            st.session_state.settings_error
+        )
 
 
 # ============================================================
@@ -1306,18 +1306,18 @@ st.markdown(
 
 
 # ============================================================
-# ULUBIONE
+# ULUBIONE STACJE
 # ============================================================
 
-header_left, header_right = st.columns(
-    [3, 1]
-)
+header_left, header_right = st.columns([3, 1])
 
 with header_left:
     st.subheader("⭐ Ulubione stacje")
 
 with header_right:
-    st.caption("☰ Edycja w panelu bocznym")
+    st.caption(
+        "☰ Edycja w panelu bocznym"
+    )
 
 
 favorites = st.session_state.favorites
@@ -1383,71 +1383,70 @@ st.selectbox(
 
 
 # ============================================================
-# POBIERANIE DANYCH
+# POBRANIE PRAWDZIWYCH DANYCH
 # ============================================================
 
 selected_station = (
     st.session_state.selected_station
 )
 
-live_trains, api_mode, api_status, api_error = (
-    get_live_trains(selected_station)
-)
-
-if api_mode == "live" and live_trains:
-    trains = live_trains
-    data_mode = "live"
-
-elif api_status in (401, 403):
-    trains = generate_test_trains(
-        selected_station
-    )
-    data_mode = "waiting"
-
-elif api_mode == "live" and not live_trains:
-    trains = []
-    data_mode = "empty"
-
-else:
-    trains = generate_test_trains(
-        selected_station
-    )
-    data_mode = "fallback"
+with st.spinner(
+    f"Pobieram ruch pociągów dla stacji "
+    f"{selected_station}…"
+):
+    (
+        trains,
+        api_mode,
+        api_status,
+        api_error,
+        api_generated_at,
+    ) = get_live_trains(selected_station)
 
 
 # ============================================================
 # STATUS API
 # ============================================================
 
-if data_mode == "live":
+if api_mode == "live" and trains:
     st.markdown(
         """
         <div class="api-banner api-live">
             ✅ <strong>Dane rzeczywiste PKP PLK</strong>
-            — aplikacja jest połączona z API.
+            — wyświetlane są najbliższe pociągi.
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-elif data_mode == "waiting":
+elif api_mode == "live" and not trains:
     st.markdown(
         """
-        <div class="api-banner api-test">
-            ⏳ <strong>Klucz PKP oczekuje na aktywację.</strong>
-            Do tego czasu wyświetlane są dane testowe.
-            Po aktywacji aplikacja przełączy się automatycznie.
+        <div class="api-banner api-warning">
+            ℹ️ Połączono z API PKP PLK, ale obecnie
+            nie znaleziono nadchodzących pociągów
+            dla wybranej stacji.
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-elif data_mode == "empty":
+elif api_status in (401, 403):
     st.markdown(
         """
-        <div class="api-banner api-live">
-            ✅ Połączono z API PKP PLK, ale dla tej stacji
-            nie znaleziono najbliższych pociągów.
+        <div class="api-banner api-error">
+            🔐 <strong>API odrzuciło klucz.</strong>
+            Sprawdź wartość PKP_API_KEY w Secrets.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+elif api_status == 429:
+    st.markdown(
+        """
+        <div class="api-banner api-warning">
+            ⏳ Osiągnięto chwilowy limit zapytań API.
+            Spróbuj ponownie za kilka minut.
         </div>
         """,
         unsafe_allow_html=True,
@@ -1457,19 +1456,26 @@ else:
     st.markdown(
         """
         <div class="api-banner api-error">
-            ⚠️ <strong>API PKP jest chwilowo niedostępne.</strong>
-            Wyświetlane są dane testowe.
+            ⚠️ <strong>Nie udało się pobrać danych PKP.</strong>
+            Szczegóły znajdziesz poniżej.
         </div>
         """,
         unsafe_allow_html=True,
     )
 
+    if api_error:
+        st.code(api_error)
+
 
 # ============================================================
-# TABLICA
+# NAGŁÓWEK WYBRANEJ STACJI
 # ============================================================
 
-last_update = datetime.now()
+display_update_time = (
+    api_generated_at
+    if api_generated_at is not None
+    else now_warsaw()
+)
 
 with st.container(border=True):
     st.markdown(
@@ -1481,12 +1487,16 @@ with st.container(border=True):
 
     st.markdown(
         f'<div class="update-time">'
-        f"Ostatnia aktualizacja: "
-        f"{last_update:%H:%M:%S}"
+        f"Ostatnia aktualizacja danych: "
+        f"{display_update_time:%H:%M:%S}"
         f"</div>",
         unsafe_allow_html=True,
     )
 
+
+# ============================================================
+# KARTY POCIĄGÓW
+# ============================================================
 
 if not trains:
     st.info(
@@ -1504,14 +1514,15 @@ for train in trains:
         with left_column:
             st.markdown(
                 f'<div class="train-time">'
-                f"{train['current_time']:%H:%M}"
+                f"{train['actual_time']:%H:%M}"
                 f"</div>",
                 unsafe_allow_html=True,
             )
 
             st.markdown(
                 f'<div class="train-direction">'
-                f"→ {train['direction']}"
+                f"{train['direction_symbol']} "
+                f"{train['direction']}"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -1521,7 +1532,10 @@ for train in trains:
                 str(train["carrier"]),
             ]
 
-            if train["platform"] not in ("", "—"):
+            if (
+                train["platform"]
+                and train["platform"] != "—"
+            ):
                 details_parts.append(
                     f"peron {train['platform']}"
                 )
@@ -1531,10 +1545,11 @@ for train in trains:
                     f"tor {train['track']}"
                 )
 
-            if (
-                train["delay"] > 0
-                and train["planned_time"]
-            ):
+            details_parts.append(
+                train["event_type"]
+            )
+
+            if train["delay"] != 0:
                 details_parts.append(
                     "planowo "
                     f"{train['planned_time']:%H:%M}"
@@ -1557,16 +1572,7 @@ for train in trains:
                 unsafe_allow_html=True,
             )
 
-            if train["cancelled"]:
-                status_html = (
-                    '<div class="status-wrap">'
-                    '<span class="status-pill '
-                    'status-cancelled">'
-                    '❌ Odwołany'
-                    '</span></div>'
-                )
-
-            elif train["delay"] == 0:
+            if train["delay"] == 0:
                 status_html = (
                     '<div class="status-wrap">'
                     '<span class="status-pill status-ok">'
@@ -1574,13 +1580,21 @@ for train in trains:
                     '</span></div>'
                 )
 
+            elif train["delay"] > 0:
+                status_html = (
+                    '<div class="status-wrap">'
+                    '<span class="status-pill status-warn">'
+                    f'⚠️ Opóźnienie '
+                    f'+{train["delay"]} min'
+                    '</span></div>'
+                )
+
             else:
                 status_html = (
                     '<div class="status-wrap">'
-                    '<span class="status-pill '
-                    'status-warn">'
-                    f'⚠️ Opóźnienie '
-                    f'+{train["delay"]} min'
+                    '<span class="status-pill status-early">'
+                    f'ℹ️ Przed czasem '
+                    f'{abs(train["delay"])} min'
                     '</span></div>'
                 )
 
@@ -1590,13 +1604,7 @@ for train in trains:
             )
 
 
-if data_mode == "live":
-    st.caption(
-        "Dane rzeczywiste: PKP Polskie Linie Kolejowe S.A. "
-        "• ustawienia zapisane w Supabase"
-    )
-else:
-    st.caption(
-        "Tryb zastępczy: dane testowe "
-        "• ustawienia zapisane w Supabase"
-    )
+st.caption(
+    "Dane rzeczywiste: PKP Polskie Linie Kolejowe S.A. "
+    "• ustawienia zapisane w Supabase"
+)
